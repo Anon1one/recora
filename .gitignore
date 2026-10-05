@@ -1,7 +1,8 @@
-# Whitelist: only the shared submission PDF and an empty README are tracked.
-*
-!.gitignore
-!README.md
-!deliverable/
-deliverable/*
-!deliverable/arch_diagram_and_requirements.pdf
+.anchor
+.DS_Store
+target
+**/*.rs.bk
+node_modules
+test-ledger
+.yarn
+.surfpool

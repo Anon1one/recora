@@ -1,0 +1,26 @@
+[toolchain]
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+recora = "ByzDYmPuV1FK7Z4RMGLgnqELFLZf3u2GoRSsB9bTndiu"
+
+[provider]
+cluster = "localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+keeper = "pnpm ts-node scripts/keeper.ts"
+test = "cd programs/recora & cargo test"
+
+[hooks]
+
+[surfpool]
+startup_wait = 5000
+shutdown_wait = 2000
+rpc_port = 8899
+host = "127.0.0.1"
+log_level = "info"
+block_production_mode = "clock"

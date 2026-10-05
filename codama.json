@@ -1,0 +1,11 @@
+{
+  "idl": "target/idl/recora.json",
+  "scripts": {
+    "client": [
+      {
+        "from": "@codama/renderers-js#renderVisitor",
+        "args": ["clients"]
+      }
+    ]
+  }
+}
