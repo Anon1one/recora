@@ -12,6 +12,7 @@ import {
   fixEncoderSize,
   getBytesDecoder,
   getBytesEncoder,
+  getProgramDerivedAddress,
   getStructDecoder,
   getStructEncoder,
   getU16Decoder,
@@ -61,7 +62,8 @@ export type InitializeConfigInstruction<
   TAccountTreasury extends string | AccountMeta<string> = string,
   TAccountMint extends string | AccountMeta<string> = string,
   TAccountDeployer extends string | AccountMeta<string> = string,
-  TAccountProgram extends string | AccountMeta<string> = string,
+  TAccountProgram extends string | AccountMeta<string> =
+    "ByzDYmPuV1FK7Z4RMGLgnqELFLZf3u2GoRSsB9bTndiu",
   TAccountProgramData extends string | AccountMeta<string> = string,
   TAccountSystemProgram extends string | AccountMeta<string> =
     "11111111111111111111111111111111",
@@ -177,8 +179,8 @@ export type InitializeConfigAsyncInput<
   treasury?: TAccountTreasury;
   mint: TAccountMint;
   deployer: TAccountDeployer;
-  program: TAccountProgram;
-  programData: TAccountProgramData;
+  program?: TAccountProgram;
+  programData?: TAccountProgramData;
   systemProgram?: TAccountSystemProgram;
   tokenProgram?: TAccountTokenProgram;
   feeBps: InitializeConfigInstructionDataArgs["feeBps"];
@@ -305,6 +307,25 @@ export async function getInitializeConfigInstructionAsync<
   if (!accounts.treasury.value) {
     accounts.treasury.value = await findTreasuryPda({ programAddress });
   }
+  if (!accounts.program.value) {
+    accounts.program.value =
+      "ByzDYmPuV1FK7Z4RMGLgnqELFLZf3u2GoRSsB9bTndiu" as Address<"ByzDYmPuV1FK7Z4RMGLgnqELFLZf3u2GoRSsB9bTndiu">;
+  }
+  if (!accounts.programData.value) {
+    accounts.programData.value = await getProgramDerivedAddress({
+      programAddress:
+        "BPFLoaderUpgradeab1e11111111111111111111111" as Address<"BPFLoaderUpgradeab1e11111111111111111111111">,
+      seeds: [
+        getBytesEncoder().encode(
+          new Uint8Array([
+            163, 46, 22, 219, 229, 28, 102, 221, 64, 220, 179, 45, 50, 234, 140,
+            35, 149, 184, 91, 94, 85, 42, 113, 225, 249, 203, 126, 42, 54, 37,
+            229, 118,
+          ]),
+        ),
+      ],
+    });
+  }
   if (!accounts.systemProgram.value) {
     accounts.systemProgram.value =
       "11111111111111111111111111111111" as Address<"11111111111111111111111111111111">;
@@ -382,7 +403,7 @@ export type InitializeConfigInput<
   treasury: TAccountTreasury;
   mint: TAccountMint;
   deployer: TAccountDeployer;
-  program: TAccountProgram;
+  program?: TAccountProgram;
   programData: TAccountProgramData;
   systemProgram?: TAccountSystemProgram;
   tokenProgram?: TAccountTokenProgram;
@@ -502,6 +523,10 @@ export function getInitializeConfigInstruction<
   const args = { ...input };
 
   // Resolve default values.
+  if (!accounts.program.value) {
+    accounts.program.value =
+      "ByzDYmPuV1FK7Z4RMGLgnqELFLZf3u2GoRSsB9bTndiu" as Address<"ByzDYmPuV1FK7Z4RMGLgnqELFLZf3u2GoRSsB9bTndiu">;
+  }
   if (!accounts.systemProgram.value) {
     accounts.systemProgram.value =
       "11111111111111111111111111111111" as Address<"11111111111111111111111111111111">;

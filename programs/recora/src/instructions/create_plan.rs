@@ -33,7 +33,8 @@ pub struct CreatePlan<'info> {
     #[account(mut)]
     pub merchant_authority: Signer<'info>,
 
-    /// CHECK: the mint for this plan
+    /// CHECK: must be the protocol mint
+    #[account(address = config.mint @ RecoraError::InvalidTerms)]
     pub mint: UncheckedAccount<'info>,
 
     /// CHECK: resolver can be any pubkey

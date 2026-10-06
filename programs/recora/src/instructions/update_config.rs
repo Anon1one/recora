@@ -58,6 +58,10 @@ pub fn update_config_windows_handler(
 ) -> Result<()> {
     require!(min_interval <= max_interval, RecoraError::InvalidWindowBounds);
     require!(min_review <= max_review, RecoraError::InvalidWindowBounds);
+    require!(
+        min_interval > 0 && min_review > 0 && dispute_secs > 0,
+        RecoraError::InvalidWindowBounds
+    );
     let config = &mut ctx.accounts.config;
     config.min_interval_secs = min_interval;
     config.max_interval_secs = max_interval;

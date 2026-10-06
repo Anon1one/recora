@@ -194,6 +194,7 @@ describe("Recora End-to-End Protocol Test Suite", () => {
       .accounts({
         merchant: merchantPda,
         payoutAta: merchantAta,
+        config: configPda,
         merchantAuthority: merchantKeypair.publicKey,
         systemProgram: SystemProgram.programId,
       } as any)

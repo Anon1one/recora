@@ -9,7 +9,7 @@ pub struct InitializeConfig<'info> {
     #[account(
         init,
         payer = deployer,
-        space = 8 + 32 + 32 + 32 + 2 + 2 + 8 + 8 + 8 + 8 + 8 + 1 + 1,
+        space = 8 + 32 + 32 + 32 + 32 + 2 + 2 + 8 + 8 + 8 + 8 + 8 + 1 + 1,
         seeds = [SEED_CONFIG],
         bump
     )]
@@ -30,11 +30,15 @@ pub struct InitializeConfig<'info> {
     #[account(mut)]
     pub deployer: Signer<'info>,
 
-    #[account(executable)]
-    /// CHECK: We manually check this is the program itself or we use ProgramData
+    #[account(executable, address = crate::ID @ RecoraError::NotUpgradeAuthority)]
+    /// CHECK: Must be this program; its ProgramData is checked below
     pub program: UncheckedAccount<'info>,
 
+    // ProgramData must belong to this program, not to any program the caller controls.
     #[account(
+        seeds = [crate::ID.as_ref()],
+        bump,
+        seeds::program = anchor_lang::solana_program::bpf_loader_upgradeable::ID,
         constraint = program_data.upgrade_authority_address == Some(deployer.key()) @ RecoraError::NotUpgradeAuthority
     )]
     pub program_data: Box<Account<'info, ProgramData>>,
@@ -56,11 +60,16 @@ pub fn initialize_config_handler(
     require!(fee_bps <= 100 && max_resolver_fee_bps <= 1000, RecoraError::FeeTooHigh);
     require!(min_interval_secs <= max_interval_secs, RecoraError::InvalidWindowBounds);
     require!(min_review_secs <= max_review_secs, RecoraError::InvalidWindowBounds);
+    require!(
+        min_interval_secs > 0 && min_review_secs > 0 && dispute_secs > 0,
+        RecoraError::InvalidWindowBounds
+    );
 
     let config = &mut ctx.accounts.config;
     config.authority = ctx.accounts.deployer.key();
     config.pending_authority = Pubkey::default();
     config.fee_treasury = ctx.accounts.treasury.key();
+    config.mint = ctx.accounts.mint.key();
     config.fee_bps = fee_bps;
     config.max_resolver_fee_bps = max_resolver_fee_bps;
     config.min_interval_secs = min_interval_secs;

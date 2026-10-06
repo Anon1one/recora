@@ -10,6 +10,7 @@ pub enum SubscriptionStatus {
 #[account]
 pub struct Subscription {
     pub plan: Pubkey,
+    pub merchant: Pubkey,
     pub subscriber: Pubkey,
     pub status: SubscriptionStatus,
     pub price: u64,

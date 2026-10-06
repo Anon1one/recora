@@ -13,7 +13,7 @@ wallet = "~/.config/solana/id.json"
 
 [scripts]
 keeper = "pnpm ts-node scripts/keeper.ts"
-test = "cd programs/recora & cargo test"
+test = "cd programs/recora && cargo test"
 
 [hooks]
 

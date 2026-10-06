@@ -10,7 +10,7 @@ pub struct Subscribe<'info> {
     #[account(
         init,
         payer = subscriber,
-        space = 8 + 32 + 32 + 1 + 8 + 8 + 8 + 8 + 32 + 2 + 2 + 8 + 8 + 8 + 8 + 1 + 1,
+        space = 8 + 32 + 32 + 32 + 1 + 8 + 8 + 8 + 8 + 32 + 2 + 2 + 8 + 8 + 8 + 8 + 1 + 1,
         seeds = [SEED_SUB, plan.key().as_ref(), subscriber.key().as_ref()],
         bump
     )]
@@ -61,6 +61,7 @@ pub struct Subscribe<'info> {
     pub delegate: UncheckedAccount<'info>,
 
     /// CHECK: the mint for the plan and vault
+    #[account(address = plan.mint @ RecoraError::WrongTokenAccount)]
     pub mint: UncheckedAccount<'info>,
 
     pub system_program: Program<'info, System>,
@@ -68,7 +69,7 @@ pub struct Subscribe<'info> {
 }
 
 pub fn subscribe_handler(ctx: Context<Subscribe>, n_cycles: u64) -> Result<()> {
-    require!(ctx.accounts.subscriber.key() != ctx.accounts.plan.merchant, RecoraError::PartyConflict);
+    require!(ctx.accounts.subscriber.key() != ctx.accounts.merchant_authority.key(), RecoraError::PartyConflict);
     require!(ctx.accounts.subscriber.key() != ctx.accounts.plan.resolver, RecoraError::PartyConflict);
 
     let plan = &mut ctx.accounts.plan;
@@ -76,6 +77,7 @@ pub fn subscribe_handler(ctx: Context<Subscribe>, n_cycles: u64) -> Result<()> {
 
     let sub = &mut ctx.accounts.sub;
     sub.plan = plan.key();
+    sub.merchant = plan.merchant;
     sub.subscriber = ctx.accounts.subscriber.key();
     sub.status = SubscriptionStatus::Active;
     sub.price = plan.price;
