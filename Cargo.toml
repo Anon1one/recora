@@ -1,0 +1,11 @@
+[workspace]
+members = [
+    "programs/*"
+]
+resolver = "2"
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "allow" }
+
+[profile.release]
+overflow-checks = true

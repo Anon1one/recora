@@ -1,0 +1,33 @@
+{
+  "name": "recora",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "anchor build",
+    "codegen": "codama run client",
+    "test": "anchor test",
+    "keeper": "ts-node scripts/keeper.ts",
+    "lint": "eslint . --ext .ts"
+  },
+  "dependencies": {
+    "@anchor-lang/core": "^1.0.0",
+    "@anchor-lang/spl-token": "^1.0.0",
+    "@coral-xyz/anchor": "^0.32.1",
+    "@solana/spl-token": "^0.4.9",
+    "@solana/web3.js": "^1.98.0"
+  },
+  "devDependencies": {
+    "@codama/nodes-from-anchor": "^1.5.6",
+    "@codama/renderers-js": "^2.5.0",
+    "@types/bn.js": "^5.1.5",
+    "@types/chai": "^4.3.11",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^20.11.0",
+    "chai": "^4.4.1",
+    "codama": "^1.11.0",
+    "mocha": "^10.2.0",
+    "ts-mocha": "^10.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}
