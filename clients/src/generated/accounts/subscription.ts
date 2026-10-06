@@ -62,6 +62,7 @@ export function getSubscriptionDiscriminatorBytes(): ReadonlyUint8Array {
 export type Subscription = {
   discriminator: ReadonlyUint8Array;
   plan: Address;
+  merchant: Address;
   subscriber: Address;
   status: SubscriptionStatus;
   price: bigint;
@@ -81,6 +82,7 @@ export type Subscription = {
 
 export type SubscriptionArgs = {
   plan: Address;
+  merchant: Address;
   subscriber: Address;
   status: SubscriptionStatusArgs;
   price: number | bigint;
@@ -104,6 +106,7 @@ export function getSubscriptionEncoder(): FixedSizeEncoder<SubscriptionArgs> {
     getStructEncoder([
       ["discriminator", fixEncoderSize(getBytesEncoder(), 8)],
       ["plan", getAddressEncoder()],
+      ["merchant", getAddressEncoder()],
       ["subscriber", getAddressEncoder()],
       ["status", getSubscriptionStatusEncoder()],
       ["price", getU64Encoder()],
@@ -129,6 +132,7 @@ export function getSubscriptionDecoder(): FixedSizeDecoder<Subscription> {
   return getStructDecoder([
     ["discriminator", fixDecoderSize(getBytesDecoder(), 8)],
     ["plan", getAddressDecoder()],
+    ["merchant", getAddressDecoder()],
     ["subscriber", getAddressDecoder()],
     ["status", getSubscriptionStatusDecoder()],
     ["price", getU64Decoder()],
@@ -209,5 +213,5 @@ export async function fetchAllMaybeSubscription(
 }
 
 export function getSubscriptionSize(): number {
-  return 175;
+  return 207;
 }

@@ -33,6 +33,7 @@ pub struct SettleCharge<'info> {
         mut,
         seeds = [SEED_MERCHANT, merchant_authority.key().as_ref()],
         bump = merchant.bump,
+        constraint = merchant.key() == sub.merchant @ RecoraError::WrongAccount
     )]
     pub merchant: Box<Account<'info, Merchant>>,
 

@@ -40,7 +40,7 @@ import {
   type ResolvedInstructionAccount,
   type ResolvedInstructionAccountMeta,
 } from "@solana/program-client-core";
-import { findMerchantPda } from "../pdas";
+import { findConfigPda, findMerchantPda } from "../pdas";
 import { RECORA_PROGRAM_ADDRESS } from "../programs";
 
 export const INITIALIZE_MERCHANT_DISCRIMINATOR: ReadonlyUint8Array =
@@ -56,6 +56,7 @@ export type InitializeMerchantInstruction<
   TProgram extends string = typeof RECORA_PROGRAM_ADDRESS,
   TAccountMerchant extends string | AccountMeta<string> = string,
   TAccountPayoutAta extends string | AccountMeta<string> = string,
+  TAccountConfig extends string | AccountMeta<string> = string,
   TAccountMerchantAuthority extends string | AccountMeta<string> = string,
   TAccountSystemProgram extends string | AccountMeta<string> =
     "11111111111111111111111111111111",
@@ -70,6 +71,9 @@ export type InitializeMerchantInstruction<
       TAccountPayoutAta extends string
         ? ReadonlyAccount<TAccountPayoutAta>
         : TAccountPayoutAta,
+      TAccountConfig extends string
+        ? ReadonlyAccount<TAccountConfig>
+        : TAccountConfig,
       TAccountMerchantAuthority extends string
         ? WritableSignerAccount<TAccountMerchantAuthority> &
             AccountSignerMeta<TAccountMerchantAuthority>
@@ -113,6 +117,7 @@ export function getInitializeMerchantInstructionDataCodec(): FixedSizeCodec<
 export type InitializeMerchantAsyncInput<
   TAccountMerchant extends InstructionAccountInput = InstructionAccountInput,
   TAccountPayoutAta extends InstructionAccountInput = InstructionAccountInput,
+  TAccountConfig extends InstructionAccountInput = InstructionAccountInput,
   TAccountMerchantAuthority extends InstructionSignerInput =
     InstructionSignerInput,
   TAccountSystemProgram extends InstructionAccountInput =
@@ -120,6 +125,7 @@ export type InitializeMerchantAsyncInput<
 > = {
   merchant?: TAccountMerchant;
   payoutAta: TAccountPayoutAta;
+  config?: TAccountConfig;
   merchantAuthority: TAccountMerchantAuthority;
   systemProgram?: TAccountSystemProgram;
 };
@@ -127,6 +133,7 @@ export type InitializeMerchantAsyncInput<
 export async function getInitializeMerchantInstructionAsync<
   TAccountMerchant extends InstructionAccountInput,
   TAccountPayoutAta extends InstructionAccountInput,
+  TAccountConfig extends InstructionAccountInput,
   TAccountMerchantAuthority extends InstructionSignerInput,
   TAccountSystemProgram extends InstructionAccountInput,
   TProgramAddress extends Address = typeof RECORA_PROGRAM_ADDRESS,
@@ -134,6 +141,7 @@ export async function getInitializeMerchantInstructionAsync<
   input: InitializeMerchantAsyncInput<
     TAccountMerchant,
     TAccountPayoutAta,
+    TAccountConfig,
     TAccountMerchantAuthority,
     TAccountSystemProgram
   >,
@@ -148,6 +156,10 @@ export async function getInitializeMerchantInstructionAsync<
     ResolvedInstructionAccountMeta<
       TAccountPayoutAta,
       InstructionAccountInputAddress<TAccountPayoutAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountConfig,
+      InstructionAccountInputAddress<TAccountConfig>
     >,
     ResolvedInstructionAccountMeta<
       TAccountMerchantAuthority,
@@ -177,6 +189,7 @@ export async function getInitializeMerchantInstructionAsync<
       isSigner: false,
       isWritable: false,
     },
+    config: { value: input.config ?? null, isSigner: false, isWritable: false },
     merchantAuthority: {
       value: input.merchantAuthority ?? null,
       isSigner: true,
@@ -205,6 +218,9 @@ export async function getInitializeMerchantInstructionAsync<
       { programAddress },
     );
   }
+  if (!accounts.config.value) {
+    accounts.config.value = await findConfigPda({ programAddress });
+  }
   if (!accounts.systemProgram.value) {
     accounts.systemProgram.value =
       "11111111111111111111111111111111" as Address<"11111111111111111111111111111111">;
@@ -214,6 +230,7 @@ export async function getInitializeMerchantInstructionAsync<
     accounts: [
       getAccountMeta("merchant", accounts.merchant),
       getAccountMeta("payoutAta", accounts.payoutAta),
+      getAccountMeta("config", accounts.config),
       getAccountMeta("merchantAuthority", accounts.merchantAuthority),
       getAccountMeta("systemProgram", accounts.systemProgram),
     ],
@@ -230,6 +247,10 @@ export async function getInitializeMerchantInstructionAsync<
       InstructionAccountInputAddress<TAccountPayoutAta>
     >,
     ResolvedInstructionAccountMeta<
+      TAccountConfig,
+      InstructionAccountInputAddress<TAccountConfig>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountMerchantAuthority,
       InstructionAccountInputAddress<TAccountMerchantAuthority>
     >,
@@ -243,6 +264,7 @@ export async function getInitializeMerchantInstructionAsync<
 export type InitializeMerchantInput<
   TAccountMerchant extends InstructionAccountInput = InstructionAccountInput,
   TAccountPayoutAta extends InstructionAccountInput = InstructionAccountInput,
+  TAccountConfig extends InstructionAccountInput = InstructionAccountInput,
   TAccountMerchantAuthority extends InstructionSignerInput =
     InstructionSignerInput,
   TAccountSystemProgram extends InstructionAccountInput =
@@ -250,6 +272,7 @@ export type InitializeMerchantInput<
 > = {
   merchant: TAccountMerchant;
   payoutAta: TAccountPayoutAta;
+  config: TAccountConfig;
   merchantAuthority: TAccountMerchantAuthority;
   systemProgram?: TAccountSystemProgram;
 };
@@ -257,6 +280,7 @@ export type InitializeMerchantInput<
 export function getInitializeMerchantInstruction<
   TAccountMerchant extends InstructionAccountInput,
   TAccountPayoutAta extends InstructionAccountInput,
+  TAccountConfig extends InstructionAccountInput,
   TAccountMerchantAuthority extends InstructionSignerInput,
   TAccountSystemProgram extends InstructionAccountInput,
   TProgramAddress extends Address = typeof RECORA_PROGRAM_ADDRESS,
@@ -264,6 +288,7 @@ export function getInitializeMerchantInstruction<
   input: InitializeMerchantInput<
     TAccountMerchant,
     TAccountPayoutAta,
+    TAccountConfig,
     TAccountMerchantAuthority,
     TAccountSystemProgram
   >,
@@ -277,6 +302,10 @@ export function getInitializeMerchantInstruction<
   ResolvedInstructionAccountMeta<
     TAccountPayoutAta,
     InstructionAccountInputAddress<TAccountPayoutAta>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountConfig,
+    InstructionAccountInputAddress<TAccountConfig>
   >,
   ResolvedInstructionAccountMeta<
     TAccountMerchantAuthority,
@@ -305,6 +334,7 @@ export function getInitializeMerchantInstruction<
       isSigner: false,
       isWritable: false,
     },
+    config: { value: input.config ?? null, isSigner: false, isWritable: false },
     merchantAuthority: {
       value: input.merchantAuthority ?? null,
       isSigner: true,
@@ -331,6 +361,7 @@ export function getInitializeMerchantInstruction<
     accounts: [
       getAccountMeta("merchant", accounts.merchant),
       getAccountMeta("payoutAta", accounts.payoutAta),
+      getAccountMeta("config", accounts.config),
       getAccountMeta("merchantAuthority", accounts.merchantAuthority),
       getAccountMeta("systemProgram", accounts.systemProgram),
     ],
@@ -345,6 +376,10 @@ export function getInitializeMerchantInstruction<
     ResolvedInstructionAccountMeta<
       TAccountPayoutAta,
       InstructionAccountInputAddress<TAccountPayoutAta>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountConfig,
+      InstructionAccountInputAddress<TAccountConfig>
     >,
     ResolvedInstructionAccountMeta<
       TAccountMerchantAuthority,
@@ -365,8 +400,9 @@ export type ParsedInitializeMerchantInstruction<
   accounts: {
     merchant: TAccountMetas[0];
     payoutAta: TAccountMetas[1];
-    merchantAuthority: TAccountMetas[2];
-    systemProgram: TAccountMetas[3];
+    config: TAccountMetas[2];
+    merchantAuthority: TAccountMetas[3];
+    systemProgram: TAccountMetas[4];
   };
   data: InitializeMerchantInstructionData;
 };
@@ -379,12 +415,12 @@ export function parseInitializeMerchantInstruction<
     InstructionWithAccounts<TAccountMetas> &
     InstructionWithData<ReadonlyUint8Array>,
 ): ParsedInitializeMerchantInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 4) {
+  if (instruction.accounts.length < 5) {
     throw new SolanaError(
       SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS,
       {
         actualAccountMetas: instruction.accounts.length,
-        expectedAccountMetas: 4,
+        expectedAccountMetas: 5,
       },
     );
   }
@@ -399,6 +435,7 @@ export function parseInitializeMerchantInstruction<
     accounts: {
       merchant: getNextAccount(),
       payoutAta: getNextAccount(),
+      config: getNextAccount(),
       merchantAuthority: getNextAccount(),
       systemProgram: getNextAccount(),
     },

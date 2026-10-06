@@ -128,7 +128,7 @@ The keeper automatically:
 
 ## Security & Threat Model Audit
 
-A publication-grade security audit is documented in [`docs/SECURITY_AUDIT.md`](file:///home/utkarsh/Projects/recora/docs/SECURITY_AUDIT.md), covering:
+A publication-grade security audit is documented in [`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md), covering:
 - **STRIDE Threat Modeling** across all 5 protocol actors.
 - **Invariant Proofs**: Escrow Vault Isolation, Keeper Rent Neutrality, and Conservation of Tokens:
   $$\text{resolver\_fee} + \text{protocol\_fee} + \text{merchant\_net} + \text{subscriber\_share} \equiv \text{amount}$$

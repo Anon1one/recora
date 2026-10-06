@@ -78,6 +78,8 @@ pub fn process_billing_handler(ctx: Context<ProcessBilling>) -> Result<()> {
         // Transition to Lapsed without reverting (REQ-09)
         sub.status = SubscriptionStatus::Lapsed;
         emit!(SubscriptionLapsed { subscription: sub.key() });
+        // The charge PDA was created by `init` before this check; return its rent.
+        ctx.accounts.charge.close(ctx.accounts.caller.to_account_info())?;
         return Ok(());
     }
 

@@ -347,6 +347,7 @@ fn test_merchant_and_plan_lifecycle() {
         accounts: recora::accounts::InitializeMerchant {
             merchant: merchant_pda,
             payout_ata,
+            config: config_pda,
             merchant_authority: merchant_authority.pubkey(),
             system_program: system_program::id(),
         }.to_account_metas(Some(true)),

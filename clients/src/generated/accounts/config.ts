@@ -56,6 +56,7 @@ export type Config = {
   authority: Address;
   pendingAuthority: Address;
   feeTreasury: Address;
+  mint: Address;
   feeBps: number;
   maxResolverFeeBps: number;
   minIntervalSecs: bigint;
@@ -71,6 +72,7 @@ export type ConfigArgs = {
   authority: Address;
   pendingAuthority: Address;
   feeTreasury: Address;
+  mint: Address;
   feeBps: number;
   maxResolverFeeBps: number;
   minIntervalSecs: number | bigint;
@@ -90,6 +92,7 @@ export function getConfigEncoder(): FixedSizeEncoder<ConfigArgs> {
       ["authority", getAddressEncoder()],
       ["pendingAuthority", getAddressEncoder()],
       ["feeTreasury", getAddressEncoder()],
+      ["mint", getAddressEncoder()],
       ["feeBps", getU16Encoder()],
       ["maxResolverFeeBps", getU16Encoder()],
       ["minIntervalSecs", getU64Encoder()],
@@ -111,6 +114,7 @@ export function getConfigDecoder(): FixedSizeDecoder<Config> {
     ["authority", getAddressDecoder()],
     ["pendingAuthority", getAddressDecoder()],
     ["feeTreasury", getAddressDecoder()],
+    ["mint", getAddressDecoder()],
     ["feeBps", getU16Decoder()],
     ["maxResolverFeeBps", getU16Decoder()],
     ["minIntervalSecs", getU64Decoder()],
@@ -182,5 +186,5 @@ export async function fetchAllMaybeConfig(
 }
 
 export function getConfigSize(): number {
-  return 150;
+  return 182;
 }

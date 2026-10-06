@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::TokenAccount;
-use crate::state::Merchant;
-use crate::constants::SEED_MERCHANT;
+use crate::state::{Config, Merchant};
+use crate::constants::{SEED_CONFIG, SEED_MERCHANT};
 use crate::errors::RecoraError;
 use crate::events::MerchantInitialized;
 
@@ -18,8 +18,12 @@ pub struct InitializeMerchant<'info> {
 
     #[account(
         token::authority = merchant_authority,
+        constraint = payout_ata.mint == config.mint @ RecoraError::WrongTokenAccount
     )]
     pub payout_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(seeds = [SEED_CONFIG], bump)]
+    pub config: Box<Account<'info, Config>>,
 
     #[account(mut)]
     pub merchant_authority: Signer<'info>,

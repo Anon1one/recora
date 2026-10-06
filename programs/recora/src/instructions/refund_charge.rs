@@ -45,7 +45,8 @@ pub struct RefundCharge<'info> {
     #[account(
         seeds = [SEED_MERCHANT, merchant_authority.key().as_ref()],
         bump = merchant.bump,
-        constraint = merchant.authority == merchant_authority.key() @ RecoraError::Unauthorized
+        constraint = merchant.authority == merchant_authority.key() @ RecoraError::Unauthorized,
+        constraint = merchant.key() == sub.merchant @ RecoraError::Unauthorized
     )]
     pub merchant: Box<Account<'info, Merchant>>,
 
