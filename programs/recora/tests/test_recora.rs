@@ -338,8 +338,7 @@ fn test_merchant_and_plan_lifecycle() {
         &[SEED_MERCHANT, merchant_authority.pubkey().as_ref()],
         &program_id,
     );
-    let payout_ata_keypair = Keypair::new();
-    let payout_ata = payout_ata_keypair.pubkey();
+    let payout_ata = recora::utils::canonical_ata(&merchant_authority.pubkey(), &mint, &anchor_spl::token::ID);
     svm.set_account(payout_ata, create_mock_token_account(&mint, &merchant_authority.pubkey(), 0)).unwrap();
 
     let init_merch_ix = solana_program::instruction::Instruction {

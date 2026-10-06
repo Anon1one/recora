@@ -3,6 +3,7 @@ use anchor_spl::token_interface::{approve, Approve, TokenAccount};
 use crate::state::{Config, Plan, Subscription, SubscriptionStatus};
 use crate::constants::{SEED_CONFIG, SEED_PLAN, SEED_SUB, SEED_VAULT, SEED_DELEGATE};
 use crate::errors::RecoraError;
+use crate::utils::canonical_ata;
 use crate::events::Subscribed;
 
 #[derive(Accounts)]
@@ -43,7 +44,8 @@ pub struct Subscribe<'info> {
     #[account(
         mut,
         constraint = subscriber_ata.owner == subscriber.key() @ RecoraError::WrongTokenAccount,
-        constraint = subscriber_ata.mint == plan.mint @ RecoraError::WrongTokenAccount
+        constraint = subscriber_ata.mint == plan.mint @ RecoraError::WrongTokenAccount,
+        constraint = subscriber_ata.key() == canonical_ata(&subscriber.key(), &plan.mint, &token_program.key()) @ RecoraError::WrongTokenAccount
     )]
     pub subscriber_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
@@ -74,6 +76,16 @@ pub fn subscribe_handler(ctx: Context<Subscribe>, n_cycles: u64) -> Result<()> {
 
     let plan = &mut ctx.accounts.plan;
     let config = &ctx.accounts.config;
+
+    // Config bounds may have been tightened since the plan was created.
+    require!(
+        plan.interval_secs >= config.min_interval_secs && plan.interval_secs <= config.max_interval_secs,
+        RecoraError::InvalidTerms
+    );
+    require!(
+        plan.review_secs >= config.min_review_secs && plan.review_secs <= config.max_review_secs,
+        RecoraError::InvalidTerms
+    );
 
     let sub = &mut ctx.accounts.sub;
     sub.plan = plan.key();

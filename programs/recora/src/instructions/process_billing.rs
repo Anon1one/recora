@@ -3,6 +3,7 @@ use anchor_spl::token_interface::{transfer_checked, TransferChecked, TokenAccoun
 use crate::state::{Plan, Subscription, SubscriptionStatus, Charge, ChargeState};
 use crate::constants::{SEED_PLAN, SEED_SUB, SEED_VAULT, SEED_DELEGATE, SEED_CHARGE};
 use crate::errors::RecoraError;
+use crate::utils::canonical_ata;
 use crate::events::{ChargePulled, SubscriptionLapsed};
 
 #[derive(Accounts)]
@@ -40,7 +41,8 @@ pub struct ProcessBilling<'info> {
 
     #[account(
         mut,
-        constraint = subscriber_ata.owner == sub.subscriber @ RecoraError::WrongTokenAccount
+        constraint = subscriber_ata.owner == sub.subscriber @ RecoraError::WrongTokenAccount,
+        constraint = subscriber_ata.key() == canonical_ata(&sub.subscriber, &plan.mint, &token_program.key()) @ RecoraError::WrongTokenAccount
     )]
     pub subscriber_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
@@ -77,6 +79,7 @@ pub fn process_billing_handler(ctx: Context<ProcessBilling>) -> Result<()> {
     if !is_funded {
         // Transition to Lapsed without reverting (REQ-09)
         sub.status = SubscriptionStatus::Lapsed;
+        ctx.accounts.plan.subs_count = ctx.accounts.plan.subs_count.checked_sub(1).ok_or(RecoraError::MathOverflow)?;
         emit!(SubscriptionLapsed { subscription: sub.key() });
         // The charge PDA was created by `init` before this check; return its rent.
         ctx.accounts.charge.close(ctx.accounts.caller.to_account_info())?;
