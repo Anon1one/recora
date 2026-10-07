@@ -3,7 +3,7 @@ use anchor_spl::token_interface::{transfer_checked, TransferChecked, TokenAccoun
 use crate::state::{Config, Merchant, Subscription, Charge, ChargeState};
 use crate::constants::{SEED_CONFIG, SEED_MERCHANT, SEED_SUB, SEED_VAULT, SEED_CHARGE};
 use crate::errors::RecoraError;
-use crate::utils::canonical_ata;
+use crate::utils::{canonical_ata, window_secs};
 use crate::events::DisputeResolved;
 
 #[derive(Accounts)]
@@ -91,6 +91,14 @@ pub struct ResolveDispute<'info> {
 
 pub fn resolve_dispute_handler(ctx: Context<ResolveDispute>, merchant_bps: u16) -> Result<()> {
     require!(merchant_bps <= 10_000, RecoraError::InvalidSplit);
+    // The resolver rules inside the dispute window. After it, the dispute is
+    // abandoned and settle_charge refunds the subscriber (D4: inaction costs
+    // the merchant), so the resolver cannot race the timeout refund.
+    let now = Clock::get()?.unix_timestamp;
+    let deadline = ctx.accounts.charge.dispute_opened_at
+        .checked_add(window_secs(ctx.accounts.sub.dispute_secs)?)
+        .ok_or(RecoraError::MathOverflow)?;
+    require!(now < deadline, RecoraError::DisputeTimedOut);
 
     let amount = ctx.accounts.charge.amount as u128;
     

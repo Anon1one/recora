@@ -41,6 +41,8 @@ const WRONG_ACCOUNT: u32 = 6015;
 const UNAUTHORIZED: u32 = 6003;
 const INSUFFICIENT_FEES: u32 = 6004;
 const STILL_ACTIVE: u32 = 6018;
+const INVALID_TERMS: u32 = 6007;
+const DISPUTE_TIMED_OUT: u32 = 6022;
 
 fn mock_mint(auth: &Pubkey) -> SolanaAccount {
     let mut d = vec![0u8; 82];
@@ -331,33 +333,61 @@ fn dispute_timeout_refund_emits_its_own_event() {
     assert_eq!((s_.open_charges, s_.held_total), (0, 0));
 }
 
-/// The resolver may still rule after the dispute timeout until someone runs the
-/// timeout refund (spec is silent). Also pins the exact resolve split.
-#[test]
-fn resolver_can_rule_after_timeout() {
-    let mut w = billed();
-    let s = w.subscriber.insecure_clone();
-    tx!(w, dispute_ix(w.sub, &s.pubkey(), 0), s).unwrap();
-    warp(&mut w.svm, DISPUTE as i64 * 10);
-    let r = w.resolver.insecure_clone();
+fn resolve_ix(w: &mut W, merchant_bps: u16) -> Ix {
+    let r = w.resolver.pubkey();
     let mint = w.mint;
-    let r_ata = ata(&r.pubkey(), &mint);
-    w.svm.set_account(r_ata, mock_ta(&mint, &r.pubkey(), 0)).unwrap();
-    let i = ix(
+    let r_ata = ata(&r, &mint);
+    if w.svm.get_account(&r_ata).is_none() {
+        w.svm.set_account(r_ata, mock_ta(&mint, &r, 0)).unwrap();
+    }
+    ix(
         recora::accounts::ResolveDispute {
             charge: charge(&w.sub, 0), sub: w.sub, vault: w.vault, subscriber_ata: w.sub_ata, merchant: w.merchant,
             merchant_ata: w.m_payout, config: w.config, treasury: w.treasury, resolver_ata: r_ata,
-            rent_payer: w.keeper.pubkey(), resolver: r.pubkey(), merchant_authority: w.m_auth.pubkey(),
+            rent_payer: w.keeper.pubkey(), resolver: r, merchant_authority: w.m_auth.pubkey(),
             mint: w.mint, token_program: anchor_spl::token::ID,
         },
-        recora::instruction::ResolveDispute { merchant_bps: 10_000 },
-    );
+        recora::instruction::ResolveDispute { merchant_bps },
+    )
+}
+
+/// The resolver rules inside the dispute window, and the split is exact.
+#[test]
+fn resolver_rules_inside_the_dispute_window() {
+    let mut w = billed();
+    let s = w.subscriber.insecure_clone();
+    tx!(w, dispute_ix(w.sub, &s.pubkey(), 0), s).unwrap();
+    warp(&mut w.svm, DISPUTE as i64 - 1);
+    let (i, r) = (resolve_ix(&mut w, 10_000), w.resolver.insecure_clone());
     tx!(w, i, r).unwrap();
     // amount = 15e6; resolver 2% = 300_000; pot 14_700_000 all to merchant gross; fee 0.5% = 73_500
-    assert_eq!(bal(&w.svm, &r_ata), 300_000);
+    assert_eq!(bal(&w.svm, &ata(&r.pubkey(), &w.mint)), 300_000);
     assert_eq!(bal(&w.svm, &w.treasury), 73_500);
     assert_eq!(bal(&w.svm, &w.m_payout), 14_700_000 - 73_500);
     assert_eq!(bal(&w.svm, &w.vault), 0);
+}
+
+/// D4: once the dispute times out the resolver can no longer rule; only the
+/// timeout refund to the subscriber remains.
+#[test]
+fn resolver_cannot_rule_after_the_timeout() {
+    let mut w = billed();
+    let s = w.subscriber.insecure_clone();
+    tx!(w, dispute_ix(w.sub, &s.pubkey(), 0), s).unwrap();
+    warp(&mut w.svm, DISPUTE as i64);
+    let (i, r) = (resolve_ix(&mut w, 10_000), w.resolver.insecure_clone());
+    fails_with(tx!(w, i, r), DISPUTE_TIMED_OUT);
+    let before = bal(&w.svm, &w.sub_ata);
+    tx!(w, settle_ix(&w, w.sub, &s.pubkey(), 0), k(&w)).unwrap();
+    assert_eq!(bal(&w.svm, &w.sub_ata), before + PRICE);
+}
+
+/// Subscribing for zero cycles is rejected.
+#[test]
+fn subscribe_rejects_zero_cycles() {
+    let mut w = world();
+    let s = w.subscriber.insecure_clone();
+    fails_with(tx!(w, subscribe_ix(&w, w.plan, &s.pubkey(), 0), s), INVALID_TERMS);
 }
 
 /// D6: late keeper catches up one cycle per call; invariant 1 holds (vault == held_total here).

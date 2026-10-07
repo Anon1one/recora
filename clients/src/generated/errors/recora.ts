@@ -58,10 +58,13 @@ export const RECORA_ERROR__CHARGES_OUTSTANDING = 0x1783; // 6019
 export const RECORA_ERROR__MATH_OVERFLOW = 0x1784; // 6020
 /** UnsupportedMint: Mint has a Token-2022 extension the escrow cannot handle */
 export const RECORA_ERROR__UNSUPPORTED_MINT = 0x1785; // 6021
+/** DisputeTimedOut: Dispute timeout has passed; only the timeout refund remains */
+export const RECORA_ERROR__DISPUTE_TIMED_OUT = 0x1786; // 6022
 
 export type RecoraError =
   | typeof RECORA_ERROR__CHARGES_OUTSTANDING
   | typeof RECORA_ERROR__DISPUTE_NOT_TIMED_OUT
+  | typeof RECORA_ERROR__DISPUTE_TIMED_OUT
   | typeof RECORA_ERROR__FEE_TOO_HIGH
   | typeof RECORA_ERROR__INSUFFICIENT_FEES
   | typeof RECORA_ERROR__INVALID_RESOLVER
@@ -88,6 +91,7 @@ if (process.env["NODE_ENV"] !== "production") {
   recoraErrorMessages = {
     [RECORA_ERROR__CHARGES_OUTSTANDING]: `Subscription has outstanding open charges and cannot be closed`,
     [RECORA_ERROR__DISPUTE_NOT_TIMED_OUT]: `Dispute timeout period has not elapsed yet`,
+    [RECORA_ERROR__DISPUTE_TIMED_OUT]: `Dispute timeout has passed; only the timeout refund remains`,
     [RECORA_ERROR__FEE_TOO_HIGH]: `Fee basis points exceed maximum allowed (max 100 bps protocol, 1000 bps resolver)`,
     [RECORA_ERROR__INSUFFICIENT_FEES]: `Insufficient fees in the protocol treasury for withdrawal`,
     [RECORA_ERROR__INVALID_RESOLVER]: `Invalid resolver configuration`,
