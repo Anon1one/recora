@@ -56,6 +56,8 @@ export const RECORA_ERROR__STILL_ACTIVE = 0x1782; // 6018
 export const RECORA_ERROR__CHARGES_OUTSTANDING = 0x1783; // 6019
 /** MathOverflow: Math calculation overflow or underflow */
 export const RECORA_ERROR__MATH_OVERFLOW = 0x1784; // 6020
+/** UnsupportedMint: Mint has a Token-2022 extension the escrow cannot handle */
+export const RECORA_ERROR__UNSUPPORTED_MINT = 0x1785; // 6021
 
 export type RecoraError =
   | typeof RECORA_ERROR__CHARGES_OUTSTANDING
@@ -77,6 +79,7 @@ export type RecoraError =
   | typeof RECORA_ERROR__STILL_ACTIVE
   | typeof RECORA_ERROR__SUBSCRIPTION_NOT_ACTIVE
   | typeof RECORA_ERROR__UNAUTHORIZED
+  | typeof RECORA_ERROR__UNSUPPORTED_MINT
   | typeof RECORA_ERROR__WRONG_ACCOUNT
   | typeof RECORA_ERROR__WRONG_TOKEN_ACCOUNT;
 
@@ -102,6 +105,7 @@ if (process.env["NODE_ENV"] !== "production") {
     [RECORA_ERROR__STILL_ACTIVE]: `Subscription is still active; cancel it first`,
     [RECORA_ERROR__SUBSCRIPTION_NOT_ACTIVE]: `Subscription is not active`,
     [RECORA_ERROR__UNAUTHORIZED]: `Signer is not authorized to perform this action`,
+    [RECORA_ERROR__UNSUPPORTED_MINT]: `Mint has a Token-2022 extension the escrow cannot handle`,
     [RECORA_ERROR__WRONG_ACCOUNT]: `Destination account does not match registered pubkey`,
     [RECORA_ERROR__WRONG_TOKEN_ACCOUNT]: `Supplied token account is not the canonical ATA`,
   };

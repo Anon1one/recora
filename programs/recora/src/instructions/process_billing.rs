@@ -3,7 +3,7 @@ use anchor_spl::token_interface::{transfer_checked, TransferChecked, TokenAccoun
 use crate::state::{Plan, Subscription, SubscriptionStatus, Charge, ChargeState};
 use crate::constants::{SEED_PLAN, SEED_SUB, SEED_VAULT, SEED_DELEGATE, SEED_CHARGE};
 use crate::errors::RecoraError;
-use crate::utils::canonical_ata;
+use crate::utils::{canonical_ata, window_secs};
 use crate::events::{ChargePulled, SubscriptionLapsed};
 
 #[derive(Accounts)]
@@ -41,7 +41,8 @@ pub struct ProcessBilling<'info> {
 
     #[account(
         mut,
-        constraint = subscriber_ata.owner == sub.subscriber @ RecoraError::WrongTokenAccount,
+        // No owner check: an owner change clears the delegate, so the
+        // subscription lapses below instead of the crank reverting.
         constraint = subscriber_ata.key() == canonical_ata(&sub.subscriber, &plan.mint, &token_program.key()) @ RecoraError::WrongTokenAccount
     )]
     pub subscriber_ata: Box<InterfaceAccount<'info, TokenAccount>>,
@@ -74,7 +75,8 @@ pub fn process_billing_handler(ctx: Context<ProcessBilling>) -> Result<()> {
     let price = sub.price;
     let is_funded = ctx.accounts.subscriber_ata.delegate == ctx.accounts.delegate.key().into()
         && ctx.accounts.subscriber_ata.delegated_amount >= price
-        && ctx.accounts.subscriber_ata.amount >= price;
+        && ctx.accounts.subscriber_ata.amount >= price
+        && !ctx.accounts.subscriber_ata.is_frozen();
 
     if !is_funded {
         // Transition to Lapsed without reverting (REQ-09)
@@ -115,7 +117,7 @@ pub fn process_billing_handler(ctx: Context<ProcessBilling>) -> Result<()> {
     charge.rent_payer = ctx.accounts.caller.key();
     charge.bump = ctx.bumps.charge;
 
-    sub.next_billing_ts = sub.next_billing_ts.checked_add(sub.interval_secs as i64).ok_or(RecoraError::MathOverflow)?;
+    sub.next_billing_ts = sub.next_billing_ts.checked_add(window_secs(sub.interval_secs)?).ok_or(RecoraError::MathOverflow)?;
     sub.current_cycle = sub.current_cycle.checked_add(1).ok_or(RecoraError::MathOverflow)?;
     sub.open_charges = sub.open_charges.checked_add(1).ok_or(RecoraError::MathOverflow)?;
     sub.held_total = sub.held_total.checked_add(price).ok_or(RecoraError::MathOverflow)?;

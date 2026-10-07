@@ -1,6 +1,9 @@
 import { AnchorProvider, BN, Program } from "@coral-xyz/anchor";
-import { PublicKey } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { Connection, PublicKey } from "@solana/web3.js";
+import {
+  createAssociatedTokenAccountIdempotentInstruction,
+  getAssociatedTokenAddressSync,
+} from "@solana/spl-token";
 import { Recora } from "../target/types/recora";
 import idl from "../target/idl/recora.json";
 
@@ -64,9 +67,69 @@ const metrics: KeeperMetrics = {
   errors: 0,
 };
 
+// Account layout offsets (8-byte discriminator first) for getProgramAccounts filters.
+// Subscription: plan 32 | merchant 32 | subscriber 32 | status u8
+const SUB_STATUS_OFFSET = 8 + 32 + 32 + 32;
+// Charge: subscription 32 | cycle u64 | state u8
+const CHARGE_STATE_OFFSET = 8 + 32 + 8;
+const STATUS_ACTIVE = 0;
+const CHARGE_HELD = 0;
+const CHARGE_DISPUTED = 1;
+
+function u8Filter(offset: number, value: number) {
+  return { memcmp: { offset, bytes: bs58Byte(value) } };
+}
+
+// base58 of a single byte 0..57 is one character of the alphabet.
+function bs58Byte(value: number): string {
+  return "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"[value];
+}
+
+/** Chain time, so "due" matches the program's Clock, not this machine's clock. */
+async function chainNow(connection: Connection): Promise<number> {
+  const slot = await connection.getSlot();
+  const blockTime = await connection.getBlockTime(slot);
+  return blockTime ?? Math.floor(Date.now() / 1000);
+}
+
+/** Per-crank caches: the mint's token program (SPL Token or Token-2022) and merchants. */
+class Lookups {
+  private tokenPrograms = new Map<string, PublicKey>();
+  private merchants = new Map<string, { authority: PublicKey; payoutAta: PublicKey }>();
+
+  constructor(private program: Program<Recora>) {}
+
+  async tokenProgram(mint: PublicKey): Promise<PublicKey> {
+    const key = mint.toBase58();
+    if (!this.tokenPrograms.has(key)) {
+      const info = await this.program.provider.connection.getAccountInfo(mint);
+      if (!info) throw new Error(`mint ${key} not found`);
+      this.tokenPrograms.set(key, info.owner);
+    }
+    return this.tokenPrograms.get(key)!;
+  }
+
+  async merchant(merchant: PublicKey): Promise<{ authority: PublicKey; payoutAta: PublicKey }> {
+    const key = merchant.toBase58();
+    if (!this.merchants.has(key)) {
+      const m = await this.program.account.merchant.fetch(merchant);
+      this.merchants.set(key, { authority: m.authority, payoutAta: m.payoutAta });
+    }
+    return this.merchants.get(key)!;
+  }
+}
+
+function logError(what: string, err: any) {
+  console.error(`[Error] ${what}:`, err?.message || err);
+  if (err?.logs) console.error(err.logs.join("\n"));
+  metrics.errors++;
+}
+
 async function runKeeperCrank(program: Program<Recora>, provider: AnchorProvider): Promise<void> {
-  const now = Math.floor(Date.now() / 1000);
+  const connection = provider.connection;
+  const now = await chainNow(connection);
   const keeperPubkey = provider.wallet.publicKey;
+  const lookups = new Lookups(program);
 
   console.log(`\n============================================================`);
   console.log(`[Recora Keeper Crank] Epoch: ${new Date().toISOString()} | Blocktime: ${now}`);
@@ -74,169 +137,137 @@ async function runKeeperCrank(program: Program<Recora>, provider: AnchorProvider
   console.log(`============================================================`);
 
   const [configPda] = getConfigPda(program.programId);
-  const [treasuryAta] = getTreasuryPda(program.programId);
+  const [treasuryPda] = getTreasuryPda(program.programId);
   const [delegatePda] = getDelegatePda(program.programId);
+  const config = await program.account.config.fetch(configPda);
+  // create_plan and initialize_merchant force every plan onto config.mint.
+  const mint = config.mint;
+  const tokenProgram = await lookups.tokenProgram(mint);
+  const ata = (owner: PublicKey) => getAssociatedTokenAddressSync(mint, owner, true, tokenProgram);
 
   // =========================================================================
   // Crank 1: Process Due Subscriptions (Billing & Delinquency Check)
   // =========================================================================
   try {
-    const activeSubs = await program.account.subscription.all();
-    console.log(`[Billing Engine] Indexing ${activeSubs.length} total on-chain subscriptions...`);
+    const activeSubs = await program.account.subscription.all([u8Filter(SUB_STATUS_OFFSET, STATUS_ACTIVE)]);
+    console.log(`[Billing Engine] Indexing ${activeSubs.length} active subscriptions...`);
 
     for (const subEntry of activeSubs) {
       const subPubkey = subEntry.publicKey;
       const sub = subEntry.account;
+      if (now < sub.nextBillingTs.toNumber()) continue;
 
-      // Status: 0 = Active, 1 = Lapsed, 2 = Cancelled
-      const isActive = typeof sub.status === "object" ? "active" in (sub.status as any) : (sub.status as any) === 0;
-      if (!isActive) continue;
-
-      const nextBillingTime = sub.nextBillingTs.toNumber();
-      const openCharges = sub.openCharges.toNumber();
-
-      if (now >= nextBillingTime) {
-        if (openCharges >= 5) {
-          console.warn(`[Skip] Subscription ${subPubkey.toBase58()} has reached maximum open charges cap (5).`);
+      console.log(`[Bill Due] Triggering billing for ${subPubkey.toBase58()} (Cycle #${sub.currentCycle.toString()})...`);
+      try {
+        const subscriberAta = ata(sub.subscriber);
+        if (!(await connection.getAccountInfo(subscriberAta))) {
+          // The program cannot load a missing account, so it cannot lapse it either.
+          console.warn(`[Skip] Subscriber ATA ${subscriberAta.toBase58()} does not exist.`);
           continue;
         }
+        const merchant = await lookups.merchant(sub.merchant);
+        const [vaultPda] = getVaultPda(subPubkey, program.programId);
+        const [chargePda] = getChargePda(subPubkey, sub.currentCycle, program.programId);
 
-        console.log(`[Bill Due] Triggering billing for ${subPubkey.toBase58()} (Cycle #${sub.currentCycle.toString()})...`);
-        try {
-          const planAccount = await program.account.plan.fetch(sub.plan);
-          const [vaultPda] = getVaultPda(subPubkey, program.programId);
-          const [chargePda] = getChargePda(subPubkey, sub.currentCycle, program.programId);
-          const subscriberAta = getAssociatedTokenAddressSync(planAccount.mint, sub.subscriber);
+        const sig = await program.methods
+          .processBilling()
+          .accounts({
+            sub: subPubkey,
+            plan: sub.plan,
+            charge: chargePda,
+            vault: vaultPda,
+            subscriberAta,
+            delegate: delegatePda,
+            caller: keeperPubkey,
+            merchantAuthority: merchant.authority,
+            mint,
+            tokenProgram,
+          } as any)
+          .rpc();
 
-          const sig = await program.methods
-            .processBilling()
-            .accounts({
-              sub: subPubkey,
-              charge: chargePda,
-              vault: vaultPda,
-              subscriberAta,
-              delegate: delegatePda,
-              mint: planAccount.mint,
-              caller: keeperPubkey,
-              tokenProgram: TOKEN_PROGRAM_ID,
-            } as any)
-            .rpc();
-
-          const updatedSub = await program.account.subscription.fetch(subPubkey);
-          const isLapsed = typeof updatedSub.status === "object" ? "lapsed" in (updatedSub.status as any) : (updatedSub.status as any) === 1;
-
-          if (isLapsed) {
-            console.warn(`[Delinquency] Insufficient balance/allowance for ${subPubkey.toBase58()}. Transitioned to Lapsed.`);
-            metrics.delinquentTransitions++;
-          } else {
-            console.log(`[Billed] Successfully pulled cycle #${sub.currentCycle.toString()} into escrow. Sig: ${sig}`);
-            metrics.billingRuns++;
-          }
-        } catch (err: any) {
-          console.error(`[Error] Failed to process billing for ${subPubkey.toBase58()}:`, err.message || err);
-          metrics.errors++;
+        const updatedSub = await program.account.subscription.fetch(subPubkey);
+        if ("lapsed" in (updatedSub.status as any)) {
+          console.warn(`[Delinquency] ${subPubkey.toBase58()} could not be funded. Transitioned to Lapsed.`);
+          metrics.delinquentTransitions++;
+        } else {
+          console.log(`[Billed] Pulled cycle #${sub.currentCycle.toString()} into escrow. Sig: ${sig}`);
+          metrics.billingRuns++;
         }
+      } catch (err: any) {
+        logError(`Failed to process billing for ${subPubkey.toBase58()}`, err);
       }
     }
   } catch (err: any) {
-    console.error(`[Error] Failed to index subscriptions:`, err.message || err);
-    metrics.errors++;
+    logError(`Failed to index subscriptions`, err);
   }
 
   // =========================================================================
   // Crank 2: Settle Matured Review Windows & Dispute Timeouts
   // =========================================================================
   try {
-    const charges = await program.account.charge.all();
-    console.log(`[Settlement Engine] Scanning ${charges.length} on-chain charges...`);
+    const charges = [
+      ...(await program.account.charge.all([u8Filter(CHARGE_STATE_OFFSET, CHARGE_HELD)])),
+      ...(await program.account.charge.all([u8Filter(CHARGE_STATE_OFFSET, CHARGE_DISPUTED)])),
+    ];
+    console.log(`[Settlement Engine] Scanning ${charges.length} open charges...`);
 
     for (const chargeEntry of charges) {
       const chargePubkey = chargeEntry.publicKey;
       const charge = chargeEntry.account;
       const subPubkey = charge.subscription;
+      const isHeld = "held" in (charge.state as any);
 
-      const isHeld = typeof charge.state === "object" ? "held" in (charge.state as any) : (charge.state as any) === 0;
-      const isDisputed = typeof charge.state === "object" ? "disputed" in (charge.state as any) : (charge.state as any) === 1;
-
-      if (!isHeld && !isDisputed) continue;
-
-      let subAccount;
       try {
-        subAccount = await program.account.subscription.fetch(subPubkey);
-      } catch {
-        continue;
-      }
+        const sub = await program.account.subscription.fetch(subPubkey);
+        // Held: settle to the merchant once the review window has passed.
+        // Disputed: refund the subscriber once the dispute timeout has passed.
+        const due = isHeld
+          ? charge.pulledAt.toNumber() + sub.reviewSecs.toNumber()
+          : charge.disputeOpenedAt.toNumber() + sub.disputeSecs.toNumber();
+        if (now < due) continue;
 
-      const planAccount = await program.account.plan.fetch(subAccount.plan);
-      const merchantAccount = await program.account.merchant.fetch(planAccount.merchant);
-      const [vaultPda] = getVaultPda(subPubkey, program.programId);
-      const subscriberAta = getAssociatedTokenAddressSync(planAccount.mint, subAccount.subscriber);
+        const merchant = await lookups.merchant(sub.merchant);
+        const subscriberAta = ata(sub.subscriber);
+        const [vaultPda] = getVaultPda(subPubkey, program.programId);
+        console.log(`[${isHeld ? "Matured" : "Timeout"}] Charge ${chargePubkey.toBase58()} due at ${due}. Settling...`);
 
-      // Branch A: Held charge whose review window has matured -> Settle to merchant
-      if (isHeld) {
-        const reviewWindowEnd = charge.pulledAt.toNumber() + subAccount.snapshotReviewSecs.toNumber();
-        if (now >= reviewWindowEnd) {
-          console.log(`[Matured] Charge ${chargePubkey.toBase58()} review window expired at ${reviewWindowEnd}. Settling...`);
-          try {
-            const sig = await program.methods
-              .settleCharge()
-              .accounts({
-                charge: chargePubkey,
-                sub: subPubkey,
-                vault: vaultPda,
-                merchantAta: merchantAccount.payoutAta,
-                treasury: treasuryAta,
-                subscriberAta,
-                config: configPda,
-                rentPayer: charge.rentPayer,
-                merchant: planAccount.merchant,
-                mint: planAccount.mint,
-                tokenProgram: TOKEN_PROGRAM_ID,
-              } as any)
-              .rpc();
-            console.log(`[Settled] Charge ${chargePubkey.toBase58()} settled. Rent refunded to rent_payer. Sig: ${sig}`);
-            metrics.chargesSettled++;
-          } catch (err: any) {
-            console.error(`[Error] Failed to settle charge ${chargePubkey.toBase58()}:`, err.message || err);
-            metrics.errors++;
-          }
+        const sig = await program.methods
+          .settleCharge()
+          .accounts({
+            charge: chargePubkey,
+            sub: subPubkey,
+            vault: vaultPda,
+            merchant: sub.merchant,
+            merchantAta: merchant.payoutAta,
+            subscriberAta,
+            treasury: treasuryPda,
+            config: configPda,
+            rentPayer: charge.rentPayer,
+            caller: keeperPubkey,
+            merchantAuthority: merchant.authority,
+            mint,
+            tokenProgram,
+          } as any)
+          // Both ATAs must exist; they are canonical, so recreate them if someone closed one.
+          .preInstructions([
+            createAssociatedTokenAccountIdempotentInstruction(keeperPubkey, merchant.payoutAta, merchant.authority, mint, tokenProgram),
+            createAssociatedTokenAccountIdempotentInstruction(keeperPubkey, subscriberAta, sub.subscriber, mint, tokenProgram),
+          ])
+          .rpc();
+
+        if (isHeld) {
+          console.log(`[Settled] Charge ${chargePubkey.toBase58()} paid to the merchant. Sig: ${sig}`);
+          metrics.chargesSettled++;
+        } else {
+          console.log(`[Refunded] Dispute timed out for ${chargePubkey.toBase58()}. Subscriber refunded. Sig: ${sig}`);
+          metrics.disputeRefunds++;
         }
-      }
-
-      // Branch B: Disputed charge whose dispute timeout has elapsed without ruling -> Refund to subscriber
-      if (isDisputed) {
-        const disputeTimeoutEnd = charge.disputeOpenedAt.toNumber() + subAccount.snapshotDisputeSecs.toNumber();
-        if (now >= disputeTimeoutEnd) {
-          console.log(`[Timeout] Charge ${chargePubkey.toBase58()} dispute timed out at ${disputeTimeoutEnd}. Refunding...`);
-          try {
-            const sig = await program.methods
-              .settleCharge()
-              .accounts({
-                charge: chargePubkey,
-                sub: subPubkey,
-                vault: vaultPda,
-                merchantAta: merchantAccount.payoutAta,
-                treasury: treasuryAta,
-                subscriberAta,
-                config: configPda,
-                rentPayer: charge.rentPayer,
-                merchant: planAccount.merchant,
-                mint: planAccount.mint,
-                tokenProgram: TOKEN_PROGRAM_ID,
-              } as any)
-              .rpc();
-            console.log(`[Refunded] Dispute timed out for ${chargePubkey.toBase58()}. Subscriber refunded. Sig: ${sig}`);
-            metrics.disputeRefunds++;
-          } catch (err: any) {
-            console.error(`[Error] Failed to refund charge ${chargePubkey.toBase58()}:`, err.message || err);
-            metrics.errors++;
-          }
-        }
+      } catch (err: any) {
+        logError(`Failed to settle charge ${chargePubkey.toBase58()}`, err);
       }
     }
   } catch (err: any) {
-    console.error(`[Error] Failed to scan charges:`, err.message || err);
-    metrics.errors++;
+    logError(`Failed to scan charges`, err);
   }
 
   console.log(`------------------------------------------------------------`);
@@ -259,16 +290,17 @@ async function main() {
 
   const POLL_INTERVAL_MS = parseInt(process.env.KEEPER_INTERVAL_MS || "5000", 10);
 
-  // Run immediately then on interval
-  await runKeeperCrank(program, provider);
-
-  setInterval(async () => {
+  // Schedule the next crank only after the current one finishes, so slow
+  // cranks never overlap and send the same transactions twice.
+  const loop = async () => {
     try {
       await runKeeperCrank(program, provider);
     } catch (err) {
       console.error("[Fatal Keeper Error]", err);
     }
-  }, POLL_INTERVAL_MS);
+    setTimeout(loop, POLL_INTERVAL_MS);
+  };
+  await loop();
 }
 
 if (require.main === module) {
@@ -277,5 +309,6 @@ if (require.main === module) {
     process.exit(1);
   });
 }
+
 
 export { runKeeperCrank };

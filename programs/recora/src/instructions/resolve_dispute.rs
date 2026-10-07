@@ -34,7 +34,8 @@ pub struct ResolveDispute<'info> {
 
     #[account(
         mut,
-        constraint = subscriber_ata.owner == sub.subscriber @ RecoraError::WrongAccount,
+        // No owner check: on classic SPL the subscriber can hand the ATA to another
+        // key, which would block this instruction. The canonical address is enough.
         constraint = subscriber_ata.key() == canonical_ata(&sub.subscriber, &vault.mint, &token_program.key()) @ RecoraError::WrongTokenAccount
     )]
     pub subscriber_ata: Box<InterfaceAccount<'info, TokenAccount>>,
@@ -94,17 +95,17 @@ pub fn resolve_dispute_handler(ctx: Context<ResolveDispute>, merchant_bps: u16) 
     let amount = ctx.accounts.charge.amount as u128;
     
     // Calculate splits
-    let resolver_fee = amount.checked_mul(ctx.accounts.sub.resolver_fee_bps as u128).unwrap()
-        .checked_div(10_000).unwrap();
-    let pot = amount.checked_sub(resolver_fee).unwrap();
+    let resolver_fee = amount.checked_mul(ctx.accounts.sub.resolver_fee_bps as u128).ok_or(RecoraError::MathOverflow)?
+        .checked_div(10_000).ok_or(RecoraError::MathOverflow)?;
+    let pot = amount.checked_sub(resolver_fee).ok_or(RecoraError::MathOverflow)?;
     
-    let merchant_gross = pot.checked_mul(merchant_bps as u128).unwrap()
-        .checked_div(10_000).unwrap();
-    let protocol_fee = merchant_gross.checked_mul(ctx.accounts.sub.fee_bps as u128).unwrap()
-        .checked_div(10_000).unwrap();
+    let merchant_gross = pot.checked_mul(merchant_bps as u128).ok_or(RecoraError::MathOverflow)?
+        .checked_div(10_000).ok_or(RecoraError::MathOverflow)?;
+    let protocol_fee = merchant_gross.checked_mul(ctx.accounts.sub.fee_bps as u128).ok_or(RecoraError::MathOverflow)?
+        .checked_div(10_000).ok_or(RecoraError::MathOverflow)?;
         
-    let merchant_net = merchant_gross.checked_sub(protocol_fee).unwrap();
-    let subscriber_share = pot.checked_sub(merchant_gross).unwrap();
+    let merchant_net = merchant_gross.checked_sub(protocol_fee).ok_or(RecoraError::MathOverflow)?;
+    let subscriber_share = pot.checked_sub(merchant_gross).ok_or(RecoraError::MathOverflow)?;
 
     let sub_bump = ctx.accounts.sub.bump;
     let plan_key = ctx.accounts.sub.plan;
@@ -141,9 +142,9 @@ pub fn resolve_dispute_handler(ctx: Context<ResolveDispute>, merchant_bps: u16) 
     transfer_out!(ctx.accounts.merchant_ata, merchant_net);
     transfer_out!(ctx.accounts.subscriber_ata, subscriber_share);
 
-    ctx.accounts.merchant.total_revenue = ctx.accounts.merchant.total_revenue.checked_add(merchant_net as u64).unwrap();
-    ctx.accounts.sub.open_charges = ctx.accounts.sub.open_charges.checked_sub(1).unwrap();
-    ctx.accounts.sub.held_total = ctx.accounts.sub.held_total.checked_sub(amount as u64).unwrap();
+    ctx.accounts.merchant.total_revenue = ctx.accounts.merchant.total_revenue.checked_add(merchant_net as u64).ok_or(RecoraError::MathOverflow)?;
+    ctx.accounts.sub.open_charges = ctx.accounts.sub.open_charges.checked_sub(1).ok_or(RecoraError::MathOverflow)?;
+    ctx.accounts.sub.held_total = ctx.accounts.sub.held_total.checked_sub(amount as u64).ok_or(RecoraError::MathOverflow)?;
     ctx.accounts.charge.state = ChargeState::Resolved;
 
     emit!(DisputeResolved { charge: ctx.accounts.charge.key(), split_merchant_bps: merchant_bps });

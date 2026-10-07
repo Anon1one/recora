@@ -44,4 +44,6 @@ pub enum RecoraError {
     ChargesOutstanding,
     #[msg("Math calculation overflow or underflow")]
     MathOverflow,
+    #[msg("Mint has a Token-2022 extension the escrow cannot handle")]
+    UnsupportedMint,
 }

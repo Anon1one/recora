@@ -20,8 +20,8 @@ custom-panic = []
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 
 [dependencies]
-anchor-lang = "1.0.0"
-anchor-spl = "1.0.0"
+anchor-lang = "1.2.0"
+anchor-spl = "1.2.0"
 solana-program = "^3"
 spl-token-interface = "2.0"
 spl-associated-token-account-interface = "2.0"

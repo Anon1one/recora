@@ -2,8 +2,15 @@ use anchor_lang::prelude::*;
 
 #[event]
 pub struct ConfigUpdated {
+    pub authority: Pubkey,
+    pub pending_authority: Pubkey,
     pub fee_bps: u16,
     pub paused: bool,
+    pub min_interval_secs: u64,
+    pub max_interval_secs: u64,
+    pub min_review_secs: u64,
+    pub max_review_secs: u64,
+    pub dispute_secs: u64,
 }
 
 #[event]
@@ -55,6 +62,15 @@ pub struct ChargeSettled {
 #[event]
 pub struct ChargeRefunded {
     pub charge: Pubkey,
+    pub amount: u64,
+}
+
+/// A disputed charge refunded in full because nobody ruled before the dispute
+/// timeout. Kept apart from ChargeRefunded (the merchant's own refund).
+#[event]
+pub struct ChargeRefundedAfterTimeout {
+    pub charge: Pubkey,
+    pub subscription: Pubkey,
     pub amount: u64,
 }
 

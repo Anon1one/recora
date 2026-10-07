@@ -3,8 +3,8 @@ use anchor_spl::token_interface::{transfer_checked, TransferChecked, TokenAccoun
 use crate::state::{Config, Merchant, Subscription, Charge, ChargeState};
 use crate::constants::{SEED_CONFIG, SEED_MERCHANT, SEED_SUB, SEED_VAULT, SEED_CHARGE};
 use crate::errors::RecoraError;
-use crate::utils::canonical_ata;
-use crate::events::{ChargeSettled, ChargeRefunded};
+use crate::utils::{canonical_ata, window_secs};
+use crate::events::{ChargeSettled, ChargeRefundedAfterTimeout};
 
 #[derive(Accounts)]
 pub struct SettleCharge<'info> {
@@ -46,7 +46,8 @@ pub struct SettleCharge<'info> {
 
     #[account(
         mut,
-        constraint = subscriber_ata.owner == sub.subscriber @ RecoraError::WrongAccount,
+        // No owner check: on classic SPL the subscriber can hand the ATA to another
+        // key, which would block this instruction. The canonical address is enough.
         constraint = subscriber_ata.key() == canonical_ata(&sub.subscriber, &vault.mint, &token_program.key()) @ RecoraError::WrongTokenAccount
     )]
     pub subscriber_ata: Box<InterfaceAccount<'info, TokenAccount>>,
@@ -98,14 +99,14 @@ pub fn settle_charge_handler(ctx: Context<SettleCharge>) -> Result<()> {
     match charge_state {
         ChargeState::Held => {
             require!(
-                now >= ctx.accounts.charge.pulled_at.checked_add(ctx.accounts.sub.review_secs as i64).unwrap(),
+                now >= ctx.accounts.charge.pulled_at.checked_add(window_secs(ctx.accounts.sub.review_secs)?).ok_or(RecoraError::MathOverflow)?,
                 RecoraError::ReviewWindowNotElapsed
             );
 
             let amount = ctx.accounts.charge.amount;
-            let protocol_fee = (amount as u128).checked_mul(ctx.accounts.sub.fee_bps as u128).unwrap()
-                .checked_div(10_000).unwrap() as u64;
-            let merchant_net = amount.checked_sub(protocol_fee).unwrap();
+            let protocol_fee = (amount as u128).checked_mul(ctx.accounts.sub.fee_bps as u128).ok_or(RecoraError::MathOverflow)?
+                .checked_div(10_000).ok_or(RecoraError::MathOverflow)? as u64;
+            let merchant_net = amount.checked_sub(protocol_fee).ok_or(RecoraError::MathOverflow)?;
 
             // Transfer protocol fee
             if protocol_fee > 0 {
@@ -131,16 +132,16 @@ pub fn settle_charge_handler(ctx: Context<SettleCharge>) -> Result<()> {
                 transfer_checked(cpi_ctx_net, merchant_net, ctx.accounts.mint.decimals)?;
             }
 
-            ctx.accounts.merchant.total_revenue = ctx.accounts.merchant.total_revenue.checked_add(merchant_net).unwrap();
-            ctx.accounts.sub.open_charges = ctx.accounts.sub.open_charges.checked_sub(1).unwrap();
-            ctx.accounts.sub.held_total = ctx.accounts.sub.held_total.checked_sub(amount).unwrap();
+            ctx.accounts.merchant.total_revenue = ctx.accounts.merchant.total_revenue.checked_add(merchant_net).ok_or(RecoraError::MathOverflow)?;
+            ctx.accounts.sub.open_charges = ctx.accounts.sub.open_charges.checked_sub(1).ok_or(RecoraError::MathOverflow)?;
+            ctx.accounts.sub.held_total = ctx.accounts.sub.held_total.checked_sub(amount).ok_or(RecoraError::MathOverflow)?;
             ctx.accounts.charge.state = ChargeState::Settled;
 
             emit!(ChargeSettled { charge: ctx.accounts.charge.key(), merchant_net, protocol_fee });
         },
         ChargeState::Disputed => {
             require!(
-                now >= ctx.accounts.charge.dispute_opened_at.checked_add(ctx.accounts.sub.dispute_secs as i64).unwrap(),
+                now >= ctx.accounts.charge.dispute_opened_at.checked_add(window_secs(ctx.accounts.sub.dispute_secs)?).ok_or(RecoraError::MathOverflow)?,
                 RecoraError::DisputeNotTimedOut
             );
 
@@ -156,11 +157,15 @@ pub fn settle_charge_handler(ctx: Context<SettleCharge>) -> Result<()> {
                 transfer_checked(cpi_ctx, amount, ctx.accounts.mint.decimals)?;
             }
 
-            ctx.accounts.sub.open_charges = ctx.accounts.sub.open_charges.checked_sub(1).unwrap();
-            ctx.accounts.sub.held_total = ctx.accounts.sub.held_total.checked_sub(amount).unwrap();
+            ctx.accounts.sub.open_charges = ctx.accounts.sub.open_charges.checked_sub(1).ok_or(RecoraError::MathOverflow)?;
+            ctx.accounts.sub.held_total = ctx.accounts.sub.held_total.checked_sub(amount).ok_or(RecoraError::MathOverflow)?;
             ctx.accounts.charge.state = ChargeState::Refunded;
 
-            emit!(ChargeRefunded { charge: ctx.accounts.charge.key(), amount });
+            emit!(ChargeRefundedAfterTimeout {
+                charge: ctx.accounts.charge.key(),
+                subscription: ctx.accounts.sub.key(),
+                amount,
+            });
         },
         _ => return err!(RecoraError::InvalidState),
     }
