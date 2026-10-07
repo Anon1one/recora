@@ -3,6 +3,7 @@ use anchor_spl::token_interface::{transfer_checked, close_account, TransferCheck
 use crate::state::{Subscription, SubscriptionStatus};
 use crate::constants::{SEED_SUB, SEED_VAULT};
 use crate::errors::RecoraError;
+use crate::utils::canonical_ata;
 use crate::events::SubscriptionClosed;
 
 #[derive(Accounts)]
@@ -24,7 +25,8 @@ pub struct CloseSubscription<'info> {
 
     #[account(
         mut,
-        constraint = subscriber_ata.owner == subscriber.key() @ RecoraError::WrongAccount
+        constraint = subscriber_ata.owner == subscriber.key() @ RecoraError::WrongAccount,
+        constraint = subscriber_ata.key() == canonical_ata(&subscriber.key(), &vault.mint, &token_program.key()) @ RecoraError::WrongTokenAccount
     )]
     pub subscriber_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 

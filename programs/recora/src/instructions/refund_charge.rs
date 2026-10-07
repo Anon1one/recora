@@ -3,6 +3,7 @@ use anchor_spl::token_interface::{transfer_checked, TransferChecked, TokenAccoun
 use crate::state::{Merchant, Subscription, Charge, ChargeState};
 use crate::constants::{SEED_MERCHANT, SEED_SUB, SEED_VAULT, SEED_CHARGE};
 use crate::errors::RecoraError;
+use crate::utils::canonical_ata;
 use crate::events::ChargeRefunded;
 
 #[derive(Accounts)]
@@ -31,7 +32,8 @@ pub struct RefundCharge<'info> {
 
     #[account(
         mut,
-        constraint = subscriber_ata.owner == sub.subscriber @ RecoraError::WrongAccount
+        constraint = subscriber_ata.owner == sub.subscriber @ RecoraError::WrongAccount,
+        constraint = subscriber_ata.key() == canonical_ata(&sub.subscriber, &vault.mint, &token_program.key()) @ RecoraError::WrongTokenAccount
     )]
     pub subscriber_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 

@@ -7,7 +7,8 @@ use anchor_lang::solana_program::{
 };
 use litesvm::LiteSVM;
 use recora::constants::*;
-use recora::state::{Subscription, SubscriptionStatus};
+use recora::state::{Plan, Subscription, SubscriptionStatus};
+use recora::utils::canonical_ata;
 use solana_keypair::Keypair;
 use solana_message::{Message, VersionedMessage};
 use solana_sdk::account::Account as SolanaAccount;
@@ -47,6 +48,11 @@ fn mock_program_data(upgrade_authority: &Pubkey) -> SolanaAccount {
     let mut data = vec![0u8; UpgradeableLoaderState::size_of_programdata(0)];
     data[..st.len()].copy_from_slice(&st);
     SolanaAccount { lamports: 1_000_000_000, data, owner: bpf_loader_upgradeable::id(), executable: false, rent_epoch: 0 }
+}
+
+/// Canonical ATA of `owner` for `mint` under the classic token program.
+fn ata(owner: &Pubkey, mint: &Pubkey) -> Pubkey {
+    canonical_ata(owner, mint, &anchor_spl::token::ID)
 }
 
 fn bal(svm: &LiteSVM, ta: &Pubkey) -> u64 {
@@ -126,8 +132,11 @@ fn init_config_ix(deployer: &Pubkey, mint: &Pubkey, program_data: &Pubkey, dispu
 /// Returns (merchant PDA, payout token account), or the error.
 fn init_merchant(svm: &mut LiteSVM, auth: &Keypair, payout_mint: &Pubkey) -> std::result::Result<(Pubkey, Pubkey), String> {
     let merchant = pda(&[SEED_MERCHANT, auth.pubkey().as_ref()]);
-    let payout = Keypair::new().pubkey();
-    svm.set_account(payout, mock_ta(payout_mint, &auth.pubkey(), 0)).unwrap();
+    let payout = ata(&auth.pubkey(), payout_mint);
+    // Reuse the account if it already exists (e.g. a subscriber's own ATA).
+    if svm.get_account(&payout).map_or(true, |a| a.lamports == 0) {
+        svm.set_account(payout, mock_ta(payout_mint, &auth.pubkey(), 0)).unwrap();
+    }
     send(svm, &[ix(
         recora::accounts::InitializeMerchant {
             merchant,
@@ -180,7 +189,7 @@ fn world() -> World {
     send(&mut svm, &[create_plan_ix(&merchant_auth.pubkey(), &merchant, &plan, &mint, &resolver.pubkey())], &[&merchant_auth]).unwrap();
 
     let subscriber = new_kp(&mut svm);
-    let sub_ata = Keypair::new().pubkey();
+    let sub_ata = ata(&subscriber.pubkey(), &mint);
     svm.set_account(sub_ata, mock_ta(&mint, &subscriber.pubkey(), 100_000_000)).unwrap();
     let sub = pda(&[SEED_SUB, plan.as_ref(), subscriber.pubkey().as_ref()]);
     let vault = pda(&[SEED_VAULT, sub.as_ref()]);
@@ -260,6 +269,10 @@ fn billed() -> World {
     w
 }
 
+fn plan_subs(w: &World) -> u64 {
+    Plan::try_deserialize(&mut w.svm.get_account(&w.plan).unwrap().data.as_slice()).unwrap().subs_count
+}
+
 fn charge0(w: &World) -> Pubkey {
     pda(&[SEED_CHARGE, w.sub.as_ref(), &0u64.to_le_bytes()])
 }
@@ -337,8 +350,8 @@ fn resolve_pays_only_the_plans_merchant() {
     send(&mut w.svm, &[d], &[&s]).unwrap();
 
     let resolver = w.resolver.insecure_clone();
-    let resolver_ata = Keypair::new().pubkey();
     let mint = w.mint;
+    let resolver_ata = ata(&resolver.pubkey(), &mint);
     w.svm.set_account(resolver_ata, mock_ta(&mint, &resolver.pubkey(), 0)).unwrap();
     let other = new_kp(&mut w.svm);
     let (other_merchant, other_payout) = init_merchant(&mut w.svm, &other, &mint).unwrap();
@@ -421,6 +434,7 @@ fn lapse_leaves_no_charge_account() {
     bill(&mut w).unwrap();
     let s = Subscription::try_deserialize(&mut w.svm.get_account(&w.sub).unwrap().data.as_slice()).unwrap();
     assert!(s.status == SubscriptionStatus::Lapsed);
+    assert_eq!(plan_subs(&w), 0);
     assert!(w.svm.get_account(&charge0(&w)).map_or(true, |a| a.lamports == 0));
     assert_eq!(keeper_before - w.svm.get_balance(&w.keeper.pubkey()).unwrap(), 5_000);
 }
@@ -480,8 +494,8 @@ fn plan_and_payout_must_use_the_protocol_mint() {
 fn merchant_cannot_subscribe_to_own_plan() {
     let mut w = world();
     let m = w.merchant_auth.insecure_clone();
-    let m_ata = Keypair::new().pubkey();
     let mint = w.mint;
+    let m_ata = ata(&m.pubkey(), &mint);
     w.svm.set_account(m_ata, mock_ta(&mint, &m.pubkey(), 100_000_000)).unwrap();
     let sub = pda(&[SEED_SUB, w.plan.as_ref(), m.pubkey().as_ref()]);
     let i = ix(
@@ -501,4 +515,120 @@ fn merchant_cannot_subscribe_to_own_plan() {
         recora::instruction::Subscribe { n_cycles: 1 },
     );
     fails_with(send(&mut w.svm, &[i], &[&m]), PARTY_CONFLICT);
+}
+
+/// A subscription's source account must be the subscriber's canonical ATA.
+#[test]
+fn subscribe_rejects_a_non_canonical_token_account() {
+    let mut w = world();
+    let other = Keypair::new().pubkey();
+    let (mint, sp) = (w.mint, w.subscriber.pubkey());
+    w.svm.set_account(other, mock_ta(&mint, &sp, 100_000_000)).unwrap();
+    w.sub_ata = other;
+    fails_with(subscribe(&mut w, mint), WRONG_TOKEN_ACCOUNT);
+}
+
+/// A merchant's payout account must be its canonical ATA, so it can always
+/// be recreated if closed.
+#[test]
+fn merchant_payout_must_be_canonical() {
+    let mut w = world();
+    let m2 = new_kp(&mut w.svm);
+    let merchant = pda(&[SEED_MERCHANT, m2.pubkey().as_ref()]);
+    let payout = Keypair::new().pubkey();
+    let mint = w.mint;
+    w.svm.set_account(payout, mock_ta(&mint, &m2.pubkey(), 0)).unwrap();
+    let i = ix(
+        recora::accounts::InitializeMerchant {
+            merchant,
+            payout_ata: payout,
+            config: w.config,
+            merchant_authority: m2.pubkey(),
+            system_program: system_program::id(),
+        },
+        recora::instruction::InitializeMerchant {},
+    );
+    fails_with(send(&mut w.svm, &[i], &[&m2]), WRONG_TOKEN_ACCOUNT);
+}
+
+/// The resolver's fee goes only to the resolver's canonical ATA.
+#[test]
+fn resolver_fee_goes_to_resolver_ata() {
+    let mut w = billed();
+    let s = w.subscriber.insecure_clone();
+    let d = ix(
+        recora::accounts::DisputeCharge { charge: charge0(&w), sub: w.sub, subscriber: s.pubkey() },
+        recora::instruction::DisputeCharge { evidence_ref: [7; 32] },
+    );
+    send(&mut w.svm, &[d], &[&s]).unwrap();
+
+    let resolver = w.resolver.insecure_clone();
+    let mint = w.mint;
+    let elsewhere = ata(&Keypair::new().pubkey(), &mint);
+    let rp = resolver.pubkey();
+    w.svm.set_account(elsewhere, mock_ta(&mint, &rp, 0)).unwrap();
+    let i = ix(
+        recora::accounts::ResolveDispute {
+            charge: charge0(&w),
+            sub: w.sub,
+            vault: w.vault,
+            subscriber_ata: w.sub_ata,
+            merchant: w.merchant,
+            merchant_ata: w.merchant_payout,
+            config: w.config,
+            treasury: w.treasury,
+            resolver_ata: elsewhere,
+            rent_payer: w.keeper.pubkey(),
+            resolver: resolver.pubkey(),
+            merchant_authority: w.merchant_auth.pubkey(),
+            mint: w.mint,
+            token_program: anchor_spl::token::ID,
+        },
+        recora::instruction::ResolveDispute { merchant_bps: 5_000 },
+    );
+    fails_with(send(&mut w.svm, &[i], &[&resolver]), WRONG_TOKEN_ACCOUNT);
+}
+
+/// Once the admin tightens the windows, a plan outside them takes no new
+/// subscribers.
+#[test]
+fn subscribe_rechecks_plan_against_current_bounds() {
+    let mut w = world();
+    let d = w.deployer.insecure_clone();
+    // The plan bills every 30 days; raise the minimum interval above that.
+    let i = ix(
+        recora::accounts::UpdateConfig { config: w.config, authority: d.pubkey() },
+        recora::instruction::UpdateConfigWindows {
+            min_interval: 86400 * 60,
+            max_interval: 86400 * 365,
+            min_review: 86400,
+            max_review: 86400 * 7,
+            dispute_secs: DISPUTE,
+        },
+    );
+    send(&mut w.svm, &[i], &[&d]).unwrap();
+    let mint = w.mint;
+    fails_with(subscribe(&mut w, mint), INVALID_TERMS);
+}
+
+/// Subscribing counts one active subscription; cancelling from Active
+/// removes it.
+#[test]
+fn subs_count_tracks_active_subscriptions() {
+    let mut w = world();
+    let mint = w.mint;
+    subscribe(&mut w, mint).unwrap();
+    assert_eq!(plan_subs(&w), 1);
+    let s = w.subscriber.insecure_clone();
+    let i = ix(
+        recora::accounts::CancelSubscription {
+            sub: w.sub,
+            plan: w.plan,
+            subscriber: s.pubkey(),
+            merchant_authority: w.merchant_auth.pubkey(),
+        },
+        recora::instruction::CancelSubscription {},
+    );
+    send(&mut w.svm, &[i], &[&s]).unwrap();
+    assert_eq!(plan_subs(&w), 0);
 }

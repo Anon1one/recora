@@ -3,6 +3,7 @@ use anchor_spl::token_interface::TokenAccount;
 use crate::state::{Config, Merchant};
 use crate::constants::{SEED_CONFIG, SEED_MERCHANT};
 use crate::errors::RecoraError;
+use crate::utils::canonical_ata;
 use crate::events::MerchantInitialized;
 
 #[derive(Accounts)]
@@ -18,7 +19,8 @@ pub struct InitializeMerchant<'info> {
 
     #[account(
         token::authority = merchant_authority,
-        constraint = payout_ata.mint == config.mint @ RecoraError::WrongTokenAccount
+        constraint = payout_ata.mint == config.mint @ RecoraError::WrongTokenAccount,
+        constraint = payout_ata.key() == canonical_ata(&merchant_authority.key(), &config.mint, payout_ata.to_account_info().owner) @ RecoraError::WrongTokenAccount
     )]
     pub payout_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 

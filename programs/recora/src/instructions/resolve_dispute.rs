@@ -3,6 +3,7 @@ use anchor_spl::token_interface::{transfer_checked, TransferChecked, TokenAccoun
 use crate::state::{Config, Merchant, Subscription, Charge, ChargeState};
 use crate::constants::{SEED_CONFIG, SEED_MERCHANT, SEED_SUB, SEED_VAULT, SEED_CHARGE};
 use crate::errors::RecoraError;
+use crate::utils::canonical_ata;
 use crate::events::DisputeResolved;
 
 #[derive(Accounts)]
@@ -33,7 +34,8 @@ pub struct ResolveDispute<'info> {
 
     #[account(
         mut,
-        constraint = subscriber_ata.owner == sub.subscriber @ RecoraError::WrongAccount
+        constraint = subscriber_ata.owner == sub.subscriber @ RecoraError::WrongAccount,
+        constraint = subscriber_ata.key() == canonical_ata(&sub.subscriber, &vault.mint, &token_program.key()) @ RecoraError::WrongTokenAccount
     )]
     pub subscriber_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
@@ -63,7 +65,10 @@ pub struct ResolveDispute<'info> {
     )]
     pub treasury: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = resolver_ata.key() == canonical_ata(&sub.resolver, &vault.mint, &token_program.key()) @ RecoraError::WrongTokenAccount
+    )]
     pub resolver_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(
