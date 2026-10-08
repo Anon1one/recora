@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_spl::token::Token;
 use anchor_spl::token_interface::{transfer_checked, TransferChecked, TokenAccount, Mint};
 use crate::state::Config;
 use crate::constants::{SEED_CONFIG, SEED_TREASURY};
@@ -27,7 +28,7 @@ pub struct WithdrawFees<'info> {
     pub mint: Box<InterfaceAccount<'info, Mint>>,
 
     pub authority: Signer<'info>,
-    pub token_program: Interface<'info, anchor_spl::token_interface::TokenInterface>,
+    pub token_program: Program<'info, Token>,
 }
 
 pub fn withdraw_fees_handler(ctx: Context<WithdrawFees>, amount: u64) -> Result<()> {

@@ -1,19 +1,22 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{transfer_checked, TransferChecked, TokenAccount, Mint};
+use anchor_spl::token::Token;
+use anchor_spl::token_interface::{TokenAccount, Mint};
 use crate::state::{Config, Merchant, Subscription, Charge, ChargeState};
 use crate::constants::{SEED_CONFIG, SEED_MERCHANT, SEED_SUB, SEED_VAULT, SEED_CHARGE};
 use crate::errors::RecoraError;
-use crate::utils::{canonical_ata, window_secs};
+use crate::utils::{canonical_ata, pay_out, window_secs};
 use crate::events::DisputeResolved;
 
 #[derive(Accounts)]
 pub struct ResolveDispute<'info> {
+    // Only a contested dispute can be ruled on: an uncontested one is refunded
+    // to the subscriber when its window ends.
     #[account(
         mut,
         seeds = [SEED_CHARGE, sub.key().as_ref(), charge.cycle.to_le_bytes().as_ref()],
         bump = charge.bump,
         close = rent_payer,
-        constraint = charge.state == ChargeState::Disputed @ RecoraError::InvalidState
+        constraint = charge.state == ChargeState::Contested @ RecoraError::InvalidState
     )]
     pub charge: Box<Account<'info, Charge>>,
 
@@ -32,13 +35,15 @@ pub struct ResolveDispute<'info> {
     )]
     pub vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
+    // Payout accounts are unchecked and pinned by address; only the legs that
+    // receive something are loaded, by the token program.
+    /// CHECK: the subscriber's canonical ATA. No owner check: on classic SPL the
+    /// subscriber can hand the ATA to another key.
     #[account(
         mut,
-        // No owner check: on classic SPL the subscriber can hand the ATA to another
-        // key, which would block this instruction. The canonical address is enough.
-        constraint = subscriber_ata.key() == canonical_ata(&sub.subscriber, &vault.mint, &token_program.key()) @ RecoraError::WrongTokenAccount
+        address = canonical_ata(&sub.subscriber, &vault.mint, &anchor_spl::token::ID) @ RecoraError::WrongTokenAccount
     )]
-    pub subscriber_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub subscriber_ata: UncheckedAccount<'info>,
 
     #[account(
         mut,
@@ -48,11 +53,12 @@ pub struct ResolveDispute<'info> {
     )]
     pub merchant: Box<Account<'info, Merchant>>,
 
+    /// CHECK: must be merchant.payout_ata.
     #[account(
         mut,
-        constraint = merchant_ata.key() == merchant.payout_ata @ RecoraError::WrongAccount
+        address = merchant.payout_ata @ RecoraError::WrongAccount
     )]
-    pub merchant_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub merchant_ata: UncheckedAccount<'info>,
 
     #[account(
         seeds = [SEED_CONFIG],
@@ -66,11 +72,12 @@ pub struct ResolveDispute<'info> {
     )]
     pub treasury: Box<InterfaceAccount<'info, TokenAccount>>,
 
+    /// CHECK: the resolver's canonical ATA.
     #[account(
         mut,
-        constraint = resolver_ata.key() == canonical_ata(&sub.resolver, &vault.mint, &token_program.key()) @ RecoraError::WrongTokenAccount
+        address = canonical_ata(&sub.resolver, &vault.mint, &anchor_spl::token::ID) @ RecoraError::WrongTokenAccount
     )]
-    pub resolver_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub resolver_ata: UncheckedAccount<'info>,
 
     #[account(
         mut,
@@ -86,34 +93,73 @@ pub struct ResolveDispute<'info> {
     pub merchant_authority: UncheckedAccount<'info>,
 
     pub mint: Box<InterfaceAccount<'info, Mint>>,
-    pub token_program: Interface<'info, anchor_spl::token_interface::TokenInterface>,
+    pub token_program: Program<'info, Token>,
+}
+
+/// Where a ruling sends the charge and the two bonds.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Ruling {
+    pub resolver_fee: u64,
+    pub protocol_fee: u64,
+    pub merchant_net: u64,
+    pub subscriber_share: u64,
+    pub subscriber_bond_back: u64,
+    pub merchant_bond_back: u64,
+}
+
+/// The charge is split by `merchant_bps`; the floor of the merchant's gross
+/// share is the only rounding, so its dust goes to the subscriber. The resolver
+/// is paid the bond, and each side pays the part of it it lost: the subscriber
+/// `merchant_bps`, the merchant the rest. Everything adds up to amount + both bonds.
+pub fn split_ruling(
+    amount: u64,
+    subscriber_bond: u64,
+    merchant_bond: u64,
+    merchant_bps: u16,
+    fee_bps: u16,
+    treasury_frozen: bool,
+) -> Result<Ruling> {
+    require!(merchant_bps <= 10_000, RecoraError::InvalidSplit);
+    let bps = merchant_bps as u128;
+    let merchant_gross = (amount as u128 * bps / 10_000) as u64;
+    let subscriber_share = amount - merchant_gross;
+    // A frozen treasury must not block a ruling: the protocol forgoes its fee.
+    let protocol_fee = if treasury_frozen { 0 } else { (merchant_gross as u128 * fee_bps as u128 / 10_000) as u64 };
+    let merchant_net = merchant_gross - protocol_fee;
+
+    let fee_from_subscriber = (subscriber_bond as u128 * bps / 10_000) as u64;
+    let fee_from_merchant = merchant_bond
+        .checked_sub((merchant_bond as u128 * bps / 10_000) as u64)
+        .ok_or(RecoraError::MathOverflow)?;
+    Ok(Ruling {
+        resolver_fee: fee_from_subscriber.checked_add(fee_from_merchant).ok_or(RecoraError::MathOverflow)?,
+        protocol_fee,
+        merchant_net,
+        subscriber_share,
+        subscriber_bond_back: subscriber_bond - fee_from_subscriber,
+        merchant_bond_back: merchant_bond - fee_from_merchant,
+    })
 }
 
 pub fn resolve_dispute_handler(ctx: Context<ResolveDispute>, merchant_bps: u16) -> Result<()> {
-    require!(merchant_bps <= 10_000, RecoraError::InvalidSplit);
-    // The resolver rules inside the dispute window. After it, the dispute is
-    // abandoned and settle_charge refunds the subscriber (D4: inaction costs
-    // the merchant), so the resolver cannot race the timeout refund.
+    // The resolver rules inside the window that opens when the merchant
+    // contests. After it, settle_charge refunds the subscriber (D4: inaction
+    // costs the merchant), so the resolver cannot race the timeout refund.
     let now = Clock::get()?.unix_timestamp;
-    let deadline = ctx.accounts.charge.dispute_opened_at
+    let deadline = ctx.accounts.charge.contested_at
         .checked_add(window_secs(ctx.accounts.sub.dispute_secs)?)
         .ok_or(RecoraError::MathOverflow)?;
     require!(now < deadline, RecoraError::DisputeTimedOut);
 
-    let amount = ctx.accounts.charge.amount as u128;
-    
-    // Calculate splits
-    let resolver_fee = amount.checked_mul(ctx.accounts.sub.resolver_fee_bps as u128).ok_or(RecoraError::MathOverflow)?
-        .checked_div(10_000).ok_or(RecoraError::MathOverflow)?;
-    let pot = amount.checked_sub(resolver_fee).ok_or(RecoraError::MathOverflow)?;
-    
-    let merchant_gross = pot.checked_mul(merchant_bps as u128).ok_or(RecoraError::MathOverflow)?
-        .checked_div(10_000).ok_or(RecoraError::MathOverflow)?;
-    let protocol_fee = merchant_gross.checked_mul(ctx.accounts.sub.fee_bps as u128).ok_or(RecoraError::MathOverflow)?
-        .checked_div(10_000).ok_or(RecoraError::MathOverflow)?;
-        
-    let merchant_net = merchant_gross.checked_sub(protocol_fee).ok_or(RecoraError::MathOverflow)?;
-    let subscriber_share = pot.checked_sub(merchant_gross).ok_or(RecoraError::MathOverflow)?;
+    let charge = &ctx.accounts.charge;
+    let r = split_ruling(
+        charge.amount,
+        charge.subscriber_bond,
+        charge.merchant_bond,
+        merchant_bps,
+        ctx.accounts.sub.fee_bps,
+        ctx.accounts.treasury.is_frozen(),
+    )?;
 
     let sub_bump = ctx.accounts.sub.bump;
     let plan_key = ctx.accounts.sub.plan;
@@ -126,35 +172,48 @@ pub fn resolve_dispute_handler(ctx: Context<ResolveDispute>, merchant_bps: u16) 
     ];
     let signer_seeds = &[&sub_seeds[..]];
 
-    let token_program = ctx.accounts.token_program.key();
-    let decimals = ctx.accounts.mint.decimals;
-
-    // Helper macro for CPI transfers
-    macro_rules! transfer_out {
-        ($to:expr, $amt:expr) => {
-            if $amt > 0 {
-                let cpi_accounts = TransferChecked {
-                    from: ctx.accounts.vault.to_account_info(),
-                    mint: ctx.accounts.mint.to_account_info(),
-                    to: $to.to_account_info(),
-                    authority: ctx.accounts.sub.to_account_info(),
-                };
-                let cpi_ctx = CpiContext::new_with_signer(token_program, cpi_accounts, signer_seeds);
-                transfer_checked(cpi_ctx, $amt as u64, decimals)?;
-            }
+    macro_rules! pay {
+        ($to:expr, $amount:expr) => {
+            pay_out(
+                &ctx.accounts.token_program.to_account_info(),
+                &ctx.accounts.vault.to_account_info(),
+                &ctx.accounts.mint.to_account_info(),
+                &$to.to_account_info(),
+                &ctx.accounts.sub.to_account_info(),
+                signer_seeds,
+                $amount,
+                ctx.accounts.mint.decimals,
+            )
         };
     }
 
-    transfer_out!(ctx.accounts.resolver_ata, resolver_fee);
-    transfer_out!(ctx.accounts.treasury, protocol_fee);
-    transfer_out!(ctx.accounts.merchant_ata, merchant_net);
-    transfer_out!(ctx.accounts.subscriber_ata, subscriber_share);
+    let merchant_payout = r.merchant_net.checked_add(r.merchant_bond_back).ok_or(RecoraError::MathOverflow)?;
+    let subscriber_payout = r.subscriber_share.checked_add(r.subscriber_bond_back).ok_or(RecoraError::MathOverflow)?;
+    pay!(ctx.accounts.resolver_ata, r.resolver_fee)?;
+    pay!(ctx.accounts.treasury, r.protocol_fee)?;
+    pay!(ctx.accounts.merchant_ata, merchant_payout)?;
+    pay!(ctx.accounts.subscriber_ata, subscriber_payout)?;
 
-    ctx.accounts.merchant.total_revenue = ctx.accounts.merchant.total_revenue.checked_add(merchant_net as u64).ok_or(RecoraError::MathOverflow)?;
+    let released = ctx.accounts.charge.amount
+        .checked_add(ctx.accounts.charge.subscriber_bond)
+        .and_then(|x| x.checked_add(ctx.accounts.charge.merchant_bond))
+        .ok_or(RecoraError::MathOverflow)?;
+    // A statistic: saturating, so it can never block a ruling.
+    ctx.accounts.merchant.total_revenue = ctx.accounts.merchant.total_revenue.saturating_add(r.merchant_net);
     ctx.accounts.sub.open_charges = ctx.accounts.sub.open_charges.checked_sub(1).ok_or(RecoraError::MathOverflow)?;
-    ctx.accounts.sub.held_total = ctx.accounts.sub.held_total.checked_sub(amount as u64).ok_or(RecoraError::MathOverflow)?;
+    ctx.accounts.sub.held_total = ctx.accounts.sub.held_total.checked_sub(released).ok_or(RecoraError::MathOverflow)?;
     ctx.accounts.charge.state = ChargeState::Resolved;
 
-    emit!(DisputeResolved { charge: ctx.accounts.charge.key(), split_merchant_bps: merchant_bps });
+    emit!(DisputeResolved {
+        charge: ctx.accounts.charge.key(),
+        subscription: ctx.accounts.sub.key(),
+        split_merchant_bps: merchant_bps,
+        merchant_net: r.merchant_net,
+        protocol_fee: r.protocol_fee,
+        subscriber_share: r.subscriber_share,
+        resolver_fee: r.resolver_fee,
+        subscriber_bond_back: r.subscriber_bond_back,
+        merchant_bond_back: r.merchant_bond_back,
+    });
     Ok(())
 }

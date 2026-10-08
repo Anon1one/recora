@@ -37,11 +37,20 @@ export function getChargeRefundedEventDiscriminatorBytes(): ReadonlyUint8Array {
   );
 }
 
-export type ChargeRefundedEvent = { charge: Address; amount: bigint };
+export type ChargeRefundedEvent = {
+  charge: Address;
+  subscription: Address;
+  amount: bigint;
+  subscriberBond: bigint;
+  merchantBond: bigint;
+};
 
 export type ChargeRefundedEventArgs = {
   charge: Address;
+  subscription: Address;
   amount: number | bigint;
+  subscriberBond: number | bigint;
+  merchantBond: number | bigint;
 };
 
 /** Gets the encoder for {@link ChargeRefundedEventArgs} event data. */
@@ -49,7 +58,10 @@ export function getChargeRefundedEventEncoder(): FixedSizeEncoder<ChargeRefunded
   return getHiddenPrefixEncoder(
     getStructEncoder([
       ["charge", getAddressEncoder()],
+      ["subscription", getAddressEncoder()],
       ["amount", getU64Encoder()],
+      ["subscriberBond", getU64Encoder()],
+      ["merchantBond", getU64Encoder()],
     ]),
     [getConstantEncoder(CHARGE_REFUNDED_EVENT_DISCRIMINATOR)],
   );
@@ -60,7 +72,10 @@ export function getChargeRefundedEventDecoder(): FixedSizeDecoder<ChargeRefunded
   return getHiddenPrefixDecoder(
     getStructDecoder([
       ["charge", getAddressDecoder()],
+      ["subscription", getAddressDecoder()],
       ["amount", getU64Decoder()],
+      ["subscriberBond", getU64Decoder()],
+      ["merchantBond", getU64Decoder()],
     ]),
     [getConstantDecoder(CHARGE_REFUNDED_EVENT_DISCRIMINATOR)],
   );

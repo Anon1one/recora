@@ -166,6 +166,7 @@ export type SettleChargeAsyncInput<
   vault?: TAccountVault;
   merchant?: TAccountMerchant;
   merchantAta: TAccountMerchantAta;
+  /** No owner check: on classic SPL the subscriber can hand the ATA to another key. */
   subscriberAta: TAccountSubscriberAta;
   treasury: TAccountTreasury;
   config?: TAccountConfig;
@@ -449,6 +450,7 @@ export type SettleChargeInput<
   vault: TAccountVault;
   merchant: TAccountMerchant;
   merchantAta: TAccountMerchantAta;
+  /** No owner check: on classic SPL the subscriber can hand the ATA to another key. */
   subscriberAta: TAccountSubscriberAta;
   treasury: TAccountTreasury;
   config: TAccountConfig;
@@ -693,6 +695,7 @@ export type ParsedSettleChargeInstruction<
     vault: TAccountMetas[2];
     merchant: TAccountMetas[3];
     merchantAta: TAccountMetas[4];
+    /** No owner check: on classic SPL the subscriber can hand the ATA to another key. */
     subscriberAta: TAccountMetas[5];
     treasury: TAccountMetas[6];
     config: TAccountMetas[7];

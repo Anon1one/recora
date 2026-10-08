@@ -1,6 +1,6 @@
 // Regression tests for the second audit: subscriber ATA owner swaps, window
-// caps and Token-2022 mint extensions. Uses the real SPL Token, Token-2022 and
-// ATA programs bundled with LiteSVM.
+// caps, and (since the third audit) Token-2022 mints being rejected. Uses the
+// real SPL Token, Token-2022 and ATA programs bundled with LiteSVM.
 use anchor_lang::{prelude::*, InstructionData, ToAccountMetas};
 use anchor_lang::solana_program::{
     bpf_loader_upgradeable::{self, UpgradeableLoaderState},
@@ -27,7 +27,7 @@ const DISPUTE: u64 = 86400 * 3;
 const FEE_BPS: u16 = 50;
 
 const INVALID_WINDOW_BOUNDS: u32 = 6002;
-const UNSUPPORTED_MINT: u32 = 6021;
+const ACCOUNT_OWNED_BY_WRONG_PROGRAM: u32 = 3007;
 
 fn ata_program() -> Pubkey {
     anchor_spl::associated_token::ID
@@ -337,11 +337,32 @@ fn bill(e: &mut Env, keeper: &Keypair, s: &S) -> R {
 
 fn dispute(e: &mut Env, s: &S, cycle: u64) -> R {
     let i = ix(
-        recora::accounts::DisputeCharge { charge: charge_key(s, cycle), sub: s.sub, subscriber: s.kp.pubkey() },
+        recora::accounts::DisputeCharge {
+            charge: charge_key(s, cycle), sub: s.sub, vault: s.vault, bond_source: s.ata, subscriber: s.kp.pubkey(),
+            mint: e.mint, token_program: e.tp,
+        },
         recora::instruction::DisputeCharge { evidence_ref: [9; 32] },
     );
     let k = s.kp.insecure_clone();
     send(&mut e.svm, &[i], &[&k])
+}
+
+/// The dispute bond: the 2% resolver fee on one PRICE charge.
+const BOND: u64 = PRICE * 200 / 10_000;
+
+/// The merchant matches the bond from its payout ATA (minted here).
+fn contest(e: &mut Env, s: &S, m: &M, cycle: u64) -> R {
+    let (mint, tp, d) = (e.mint, e.tp, e.deployer.insecure_clone());
+    mint_to(&mut e.svm, &d, &mint, &m.payout, BOND, &tp);
+    let i = ix(
+        recora::accounts::ContestDispute {
+            charge: charge_key(s, cycle), sub: s.sub, vault: s.vault, merchant: m.merchant,
+            merchant_authority: m.auth.pubkey(), bond_source: m.payout, mint: e.mint, token_program: e.tp,
+        },
+        recora::instruction::ContestDispute {},
+    );
+    let a = m.auth.insecure_clone();
+    send(&mut e.svm, &[i], &[&a])
 }
 
 fn settle(e: &mut Env, caller: &Keypair, s: &S, m: &M, cycle: u64, rent_payer: &Pubkey) -> R {
@@ -373,6 +394,7 @@ fn refund(e: &mut Env, s: &S, m: &M, cycle: u64, rent_payer: &Pubkey) -> R {
             sub: s.sub,
             vault: s.vault,
             subscriber_ata: s.ata,
+            merchant_ata: m.payout,
             rent_payer: *rent_payer,
             merchant: m.merchant,
             merchant_authority: m.auth.pubkey(),
@@ -408,6 +430,10 @@ fn resolve(e: &mut Env, resolver: &Keypair, s: &S, m: &M, cycle: u64, rent_payer
         recora::instruction::ResolveDispute { merchant_bps },
     );
     send(&mut e.svm, &[i], &[resolver])
+}
+
+fn resolver_ata(e: &Env, resolver: &Keypair) -> Pubkey {
+    canonical_ata(&resolver.pubkey(), &e.mint, &e.tp)
 }
 
 /// Classic-SPL world: one merchant, one plan, one subscriber with charge 0 held.
@@ -446,12 +472,15 @@ fn owner_swap_does_not_block_the_resolver() {
     let alt = new_kp(&mut e.svm);
     let sk = s.kp.insecure_clone();
     set_account_owner(&mut e.svm, &s.ata, &sk, &alt.pubkey(), &tp).unwrap();
+    contest(&mut e, &s, &m, 0).unwrap();
 
     let kp = keeper.pubkey();
-    resolve(&mut e, &resolver, &s, &m, 0, &kp, 10_000).unwrap();
-    // amount 15e6: resolver 2% = 300_000, pot 14_700_000 to merchant gross, 0.5% fee = 73_500
-    assert_eq!(bal(&e.svm, &m.payout), 14_626_500);
-    assert_eq!(bal(&e.svm, &s.ata), start);
+    resolve(&mut e, &resolver, &s, &m, 0, &kp, 5_000).unwrap();
+    // 50/50: merchant gross 7_500_000 less the 0.5% fee (37_500); subscriber
+    // 7_500_000. Each side pays half the resolver's bond and gets half back.
+    assert_eq!(bal(&e.svm, &m.payout), 7_500_000 - 37_500 + BOND / 2);
+    assert_eq!(bal(&e.svm, &s.ata), start - BOND + 7_500_000 + BOND / 2);
+    assert_eq!(bal(&e.svm, &resolver_ata(&e, &resolver)), BOND);
     assert_eq!(bal(&e.svm, &s.vault), 0);
 }
 
@@ -513,30 +542,19 @@ fn initialize_config_caps_windows() {
     assert!(try_env(anchor_spl::token::ID, classic_mint, MAX_WINDOW_SECS).is_ok());
 }
 
-/// A Token-2022 mint with a transfer fee would leave the vault holding less
-/// than the charge records, so it is rejected when the protocol is set up.
+/// Only classic SPL Token mints are accepted (third audit). Token-2022 lets an
+/// account owner make their ATA refuse transfers (required memos) and a mint
+/// be closed and re-created with other extensions, so every Token-2022 mint is
+/// rejected, with or without extensions, and whichever token program is passed.
 #[test]
-fn token2022_transfer_fee_mint_is_rejected() {
+fn token2022_mints_are_rejected() {
     fn fee_mint(a: &Pubkey) -> SolanaAccount {
         t22_fee_mint(a, 100)
     }
-    fn zero_fee_mint(a: &Pubkey) -> SolanaAccount {
-        t22_fee_mint(a, 0)
+    for mint in [fee_mint as fn(&Pubkey) -> SolanaAccount, t22_plain_mint] {
+        let r = try_env(anchor_spl::token::ID, mint, 86400 * 365);
+        fails_with(r.map(|_| ()), ACCOUNT_OWNED_BY_WRONG_PROGRAM);
+        // The Token-2022 program itself is not accepted as the token program.
+        assert!(try_env(anchor_spl::token_2022::ID, mint, 86400 * 365).is_err());
     }
-    let r = try_env(anchor_spl::token_2022::ID, fee_mint, 86400 * 365);
-    fails_with(r.map(|_| ()), UNSUPPORTED_MINT);
-    // A 0 bps fee config is rejected too: its authority can raise the fee later.
-    let r = try_env(anchor_spl::token_2022::ID, zero_fee_mint, 86400 * 365);
-    fails_with(r.map(|_| ()), UNSUPPORTED_MINT);
-}
-
-/// A plain Token-2022 mint works end to end: subscribe, bill, settle.
-#[test]
-fn token2022_plain_mint_works_end_to_end() {
-    let (mut e, m, _resolver, s, keeper) = billed(env(anchor_spl::token_2022::ID, t22_plain_mint));
-    warp(&mut e.svm, REVIEW as i64);
-    let kp = keeper.pubkey();
-    settle(&mut e, &keeper, &s, &m, 0, &kp).unwrap();
-    assert_eq!(bal(&e.svm, &m.payout), MERCHANT_NET);
-    assert_eq!(bal(&e.svm, &s.vault), 0);
 }

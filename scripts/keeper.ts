@@ -1,5 +1,5 @@
 import { AnchorProvider, BN, Program } from "@coral-xyz/anchor";
-import { Connection, PublicKey } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey, sendAndConfirmTransaction } from "@solana/web3.js";
 import {
   createAssociatedTokenAccountIdempotentInstruction,
   getAssociatedTokenAddressSync,
@@ -75,6 +75,12 @@ const CHARGE_STATE_OFFSET = 8 + 32 + 8;
 const STATUS_ACTIVE = 0;
 const CHARGE_HELD = 0;
 const CHARGE_DISPUTED = 1;
+const CHARGE_CONTESTED = 5;
+
+// Off by default: recreating a closed ATA costs the keeper its rent, and the
+// owner can close it again and keep that rent. Settlement no longer needs the
+// account of a party it does not pay, so a missing one only delays that party.
+const CREATE_ATAS = process.env.KEEPER_CREATE_ATAS === "1";
 
 function u8Filter(offset: number, value: number) {
   return { memcmp: { offset, bytes: bs58Byte(value) } };
@@ -92,7 +98,7 @@ async function chainNow(connection: Connection): Promise<number> {
   return blockTime ?? Math.floor(Date.now() / 1000);
 }
 
-/** Per-crank caches: the mint's token program (SPL Token or Token-2022) and merchants. */
+/** Per-crank caches: the mint's token program and merchants. */
 class Lookups {
   private tokenPrograms = new Map<string, PublicKey>();
   private merchants = new Map<string, { authority: PublicKey; payoutAta: PublicKey }>();
@@ -119,10 +125,26 @@ class Lookups {
   }
 }
 
-function logError(what: string, err: any) {
+async function logError(connection: Connection, what: string, err: any) {
   console.error(`[Error] ${what}:`, err?.message || err);
-  if (err?.logs) console.error(err.logs.join("\n"));
+  let logs: string[] | undefined = err?.logs;
+  if (!logs && typeof err?.getLogs === "function") {
+    logs = await err.getLogs(connection).catch(() => undefined);
+  }
+  if (logs?.length) console.error(logs.join("\n"));
   metrics.errors++;
+}
+
+/** Sign with the keeper and send with web3.js, whose errors keep the program
+ *  logs and error code (Anchor 0.32's provider loses them on web3.js 1.98+). */
+async function send(provider: AnchorProvider, builder: any): Promise<string> {
+  const tx = await builder.transaction();
+  const payer = (provider.wallet as any).payer as Keypair;
+  return sendAndConfirmTransaction(provider.connection, tx, [payer], { commitment: "confirmed" });
+}
+
+async function exists(connection: Connection, account: PublicKey): Promise<boolean> {
+  return (await connection.getAccountInfo(account)) !== null;
 }
 
 async function runKeeperCrank(program: Program<Recora>, provider: AnchorProvider): Promise<void> {
@@ -159,17 +181,13 @@ async function runKeeperCrank(program: Program<Recora>, provider: AnchorProvider
 
       console.log(`[Bill Due] Triggering billing for ${subPubkey.toBase58()} (Cycle #${sub.currentCycle.toString()})...`);
       try {
+        // A missing subscriber ATA is fine: the program lapses the subscription.
         const subscriberAta = ata(sub.subscriber);
-        if (!(await connection.getAccountInfo(subscriberAta))) {
-          // The program cannot load a missing account, so it cannot lapse it either.
-          console.warn(`[Skip] Subscriber ATA ${subscriberAta.toBase58()} does not exist.`);
-          continue;
-        }
         const merchant = await lookups.merchant(sub.merchant);
         const [vaultPda] = getVaultPda(subPubkey, program.programId);
         const [chargePda] = getChargePda(subPubkey, sub.currentCycle, program.programId);
 
-        const sig = await program.methods
+        const sig = await send(provider, program.methods
           .processBilling()
           .accounts({
             sub: subPubkey,
@@ -182,8 +200,7 @@ async function runKeeperCrank(program: Program<Recora>, provider: AnchorProvider
             merchantAuthority: merchant.authority,
             mint,
             tokenProgram,
-          } as any)
-          .rpc();
+          } as any));
 
         const updatedSub = await program.account.subscription.fetch(subPubkey);
         if ("lapsed" in (updatedSub.status as any)) {
@@ -194,11 +211,11 @@ async function runKeeperCrank(program: Program<Recora>, provider: AnchorProvider
           metrics.billingRuns++;
         }
       } catch (err: any) {
-        logError(`Failed to process billing for ${subPubkey.toBase58()}`, err);
+        await logError(connection, `Failed to process billing for ${subPubkey.toBase58()}`, err);
       }
     }
   } catch (err: any) {
-    logError(`Failed to index subscriptions`, err);
+    await logError(connection, `Failed to index subscriptions`, err);
   }
 
   // =========================================================================
@@ -208,6 +225,7 @@ async function runKeeperCrank(program: Program<Recora>, provider: AnchorProvider
     const charges = [
       ...(await program.account.charge.all([u8Filter(CHARGE_STATE_OFFSET, CHARGE_HELD)])),
       ...(await program.account.charge.all([u8Filter(CHARGE_STATE_OFFSET, CHARGE_DISPUTED)])),
+      ...(await program.account.charge.all([u8Filter(CHARGE_STATE_OFFSET, CHARGE_CONTESTED)])),
     ];
     console.log(`[Settlement Engine] Scanning ${charges.length} open charges...`);
 
@@ -216,22 +234,34 @@ async function runKeeperCrank(program: Program<Recora>, provider: AnchorProvider
       const charge = chargeEntry.account;
       const subPubkey = charge.subscription;
       const isHeld = "held" in (charge.state as any);
+      const isContested = "contested" in (charge.state as any);
 
       try {
         const sub = await program.account.subscription.fetch(subPubkey);
         // Held: settle to the merchant once the review window has passed.
-        // Disputed: refund the subscriber once the dispute timeout has passed.
+        // Disputed (merchant never contested) or Contested (resolver never
+        // ruled): refund the subscriber once the dispute window has passed.
         const due = isHeld
           ? charge.pulledAt.toNumber() + sub.reviewSecs.toNumber()
-          : charge.disputeOpenedAt.toNumber() + sub.disputeSecs.toNumber();
+          : (isContested ? charge.contestedAt : charge.disputeOpenedAt).toNumber() + sub.disputeSecs.toNumber();
         if (now < due) continue;
 
         const merchant = await lookups.merchant(sub.merchant);
         const subscriberAta = ata(sub.subscriber);
         const [vaultPda] = getVaultPda(subPubkey, program.programId);
+        // Only the account this branch pays has to exist.
+        const [payee, payeeOwner] = isHeld ? [merchant.payoutAta, merchant.authority] : [subscriberAta, sub.subscriber];
+        const preInstructions = [];
+        if (!(await exists(connection, payee))) {
+          if (!CREATE_ATAS) {
+            console.warn(`[Skip] Charge ${chargePubkey.toBase58()}: payout account ${payee.toBase58()} does not exist.`);
+            continue;
+          }
+          preInstructions.push(createAssociatedTokenAccountIdempotentInstruction(keeperPubkey, payee, payeeOwner, mint, tokenProgram));
+        }
         console.log(`[${isHeld ? "Matured" : "Timeout"}] Charge ${chargePubkey.toBase58()} due at ${due}. Settling...`);
 
-        const sig = await program.methods
+        const sig = await send(provider, program.methods
           .settleCharge()
           .accounts({
             charge: chargePubkey,
@@ -248,12 +278,7 @@ async function runKeeperCrank(program: Program<Recora>, provider: AnchorProvider
             mint,
             tokenProgram,
           } as any)
-          // Both ATAs must exist; they are canonical, so recreate them if someone closed one.
-          .preInstructions([
-            createAssociatedTokenAccountIdempotentInstruction(keeperPubkey, merchant.payoutAta, merchant.authority, mint, tokenProgram),
-            createAssociatedTokenAccountIdempotentInstruction(keeperPubkey, subscriberAta, sub.subscriber, mint, tokenProgram),
-          ])
-          .rpc();
+          .preInstructions(preInstructions));
 
         if (isHeld) {
           console.log(`[Settled] Charge ${chargePubkey.toBase58()} paid to the merchant. Sig: ${sig}`);
@@ -263,11 +288,11 @@ async function runKeeperCrank(program: Program<Recora>, provider: AnchorProvider
           metrics.disputeRefunds++;
         }
       } catch (err: any) {
-        logError(`Failed to settle charge ${chargePubkey.toBase58()}`, err);
+        await logError(connection, `Failed to settle charge ${chargePubkey.toBase58()}`, err);
       }
     }
   } catch (err: any) {
-    logError(`Failed to scan charges`, err);
+    await logError(connection, `Failed to scan charges`, err);
   }
 
   console.log(`------------------------------------------------------------`);

@@ -239,6 +239,10 @@ describe("Recora End-to-End Protocol Test Suite", () => {
     expect(plan.reviewSecs.toNumber()).to.equal(REVIEW_SECS.toNumber());
     expect(plan.resolver.toBase58()).to.equal(resolverKeypair.publicKey.toBase58());
     expect(plan.resolverFeeBps).to.equal(RESOLVER_FEE_BPS);
+    // The protocol fee and dispute window are fixed in the plan the merchant signs.
+    const config = await program.account.config.fetch(configPda);
+    expect(plan.feeBps).to.equal(config.feeBps);
+    expect(plan.disputeSecs.toNumber()).to.equal(config.disputeSecs.toNumber());
     expect(plan.subsCount.toNumber()).to.equal(0);
 
     const merchant = await program.account.merchant.fetch(merchantPda);
@@ -270,7 +274,7 @@ describe("Recora End-to-End Protocol Test Suite", () => {
       .rpc();
     expect(sig).to.be.a("string");
 
-    // REQ-06: Zero token transfer occurs on Cycle 0 initial subscription
+    // REQ-06: subscribe moves no tokens; cycle 0 is pulled by process_billing
     const postBalance = (await getAccount(connection, subscriberAta)).amount;
     expect(postBalance).to.equal(initialBalance);
 
@@ -284,6 +288,7 @@ describe("Recora End-to-End Protocol Test Suite", () => {
     expect(sub.resolver.toBase58()).to.equal(resolverKeypair.publicKey.toBase58());
     expect(sub.currentCycle.toNumber()).to.equal(0);
     expect(sub.openCharges.toNumber()).to.equal(0);
+    expect(sub.cyclesRemaining.toNumber()).to.equal(6);
 
     // REQ-07: Verify delegate allowance approved
     const subTokenAccount = await getAccount(connection, subscriberAta);
@@ -329,18 +334,26 @@ describe("Recora End-to-End Protocol Test Suite", () => {
     expect(sub.openCharges.toNumber()).to.equal(1);
   });
 
-  it("REQ-10: Subscriber Dispatches Dispute Within Review Window", async () => {
+  // The dispute bond equals the resolver fee on the charge.
+  const BOND = (PLAN_PRICE.toNumber() * RESOLVER_FEE_BPS) / 10_000;
+
+  it("REQ-10: Subscriber Disputes Within Review Window and Posts the Bond", async () => {
     const cycle = new BN(0);
     const [chargePda] = getChargePda(subscriptionPda, cycle, program.programId);
 
     const evidenceRef = Array.from(new Uint8Array(32).fill(0xab));
+    const before = (await getAccount(connection, subscriberAta)).amount;
 
     const sig = await program.methods
       .disputeCharge(evidenceRef)
       .accounts({
         charge: chargePda,
         sub: subscriptionPda,
+        vault: vaultPda,
+        bondSource: subscriberAta,
         subscriber: subscriberKeypair.publicKey,
+        mint: usdcMint,
+        tokenProgram: TOKEN_PROGRAM_ID,
       } as any)
       .signers([subscriberKeypair])
       .rpc();
@@ -348,11 +361,42 @@ describe("Recora End-to-End Protocol Test Suite", () => {
 
     const charge = await program.account.charge.fetch(chargePda);
     expect(charge.evidenceRef).to.deep.equal(evidenceRef);
+    expect(charge.subscriberBond.toNumber()).to.equal(BOND);
+    expect((await getAccount(connection, subscriberAta)).amount).to.equal(before - BigInt(BOND));
+    expect((await getAccount(connection, vaultPda)).amount).to.equal(BigInt(PLAN_PRICE.toNumber() + BOND));
   });
 
-  it("REQ-14: Resolver Resolves Dispute with Proportional Split & Dust Conservation", async () => {
+  it("Merchant Contests the Dispute by Matching the Bond", async () => {
+    const [chargePda] = getChargePda(subscriptionPda, new BN(0), program.programId);
+    await mintTo(connection, admin, usdcMint, merchantAta, admin.publicKey, BOND);
+
+    await program.methods
+      .contestDispute()
+      .accounts({
+        charge: chargePda,
+        sub: subscriptionPda,
+        vault: vaultPda,
+        merchant: merchantPda,
+        merchantAuthority: merchantKeypair.publicKey,
+        bondSource: merchantAta,
+        mint: usdcMint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      } as any)
+      .signers([merchantKeypair])
+      .rpc();
+
+    const charge = await program.account.charge.fetch(chargePda);
+    expect("contested" in (charge.state as any)).to.equal(true);
+    expect(charge.merchantBond.toNumber()).to.equal(BOND);
+    expect((await getAccount(connection, vaultPda)).amount).to.equal(BigInt(PLAN_PRICE.toNumber() + 2 * BOND));
+  });
+
+  it("REQ-14: Resolver Splits the Charge; the Losing Share Pays the Resolver", async () => {
     const cycle = new BN(0);
     const [chargePda] = getChargePda(subscriptionPda, cycle, program.programId);
+    const plan = await program.account.plan.fetch(planPda);
+    const balance = async (a: PublicKey) => (await getAccount(connection, a)).amount;
+    const [sub0, merch0, res0, tres0] = await Promise.all([subscriberAta, merchantAta, resolverAta, treasuryAta].map(balance));
 
     // 70% merchant, 30% subscriber split (7,000 bps)
     const sig = await program.methods
@@ -385,6 +429,19 @@ describe("Recora End-to-End Protocol Test Suite", () => {
     const sub = await program.account.subscription.fetch(subscriptionPda);
     expect(sub.openCharges.toNumber()).to.equal(0);
     expect(sub.heldTotal.toNumber()).to.equal(0);
+
+    // Charge: merchant gross 70%, protocol fee on it; the subscriber gets the rest.
+    const price = PLAN_PRICE.toNumber();
+    const merchantGross = Math.floor((price * 7000) / 10_000);
+    const protocolFee = Math.floor((merchantGross * plan.feeBps) / 10_000);
+    // Bonds: the resolver gets one; the subscriber pays 70% of it, the merchant 30%.
+    const subscriberPart = Math.floor((BOND * 7000) / 10_000);
+    const merchantPart = BOND - subscriberPart;
+    expect(await balance(resolverAta)).to.equal(res0 + BigInt(BOND));
+    expect(await balance(treasuryAta)).to.equal(tres0 + BigInt(protocolFee));
+    expect(await balance(merchantAta)).to.equal(merch0 + BigInt(merchantGross - protocolFee + BOND - merchantPart));
+    expect(await balance(subscriberAta)).to.equal(sub0 + BigInt(price - merchantGross + BOND - subscriberPart));
+    expect(await balance(vaultPda)).to.equal(BigInt(0));
   });
 
   it("REQ-15 & REQ-16: Cancels & Closes Subscription Safely", async () => {

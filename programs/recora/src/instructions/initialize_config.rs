@@ -1,15 +1,21 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token_2022::spl_token_2022::{
-    extension::{BaseStateWithExtensions, ExtensionType, StateWithExtensions},
-    state::Mint as Mint2022,
-};
-use anchor_spl::token_interface::{Mint, TokenAccount};
+use anchor_spl::token::{Mint, Token};
+use anchor_spl::token_interface::TokenAccount;
 use crate::state::Config;
 use crate::constants::{MAX_WINDOW_SECS, SEED_CONFIG, SEED_TREASURY};
 use crate::errors::RecoraError;
 
 #[derive(Accounts)]
 pub struct InitializeConfig<'info> {
+    // Classic SPL Token only. On Token-2022 an account owner can make their own
+    // token account refuse transfers (required memos), and a mint with a close
+    // authority can be closed and re-created at the same address with other
+    // extensions; either breaks the escrow. A classic mint can never be closed,
+    // and every account the protocol touches is bound to this one mint.
+    // Typed as a classic SPL mint, so a Token-2022 mint fails while the accounts
+    // are loaded (AccountOwnedByWrongProgram), before the treasury is created.
+    pub mint: Box<Account<'info, Mint>>,
+
     #[account(
         init,
         payer = deployer,
@@ -29,8 +35,6 @@ pub struct InitializeConfig<'info> {
     )]
     pub treasury: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    pub mint: Box<InterfaceAccount<'info, Mint>>,
-
     #[account(mut)]
     pub deployer: Signer<'info>,
 
@@ -48,7 +52,7 @@ pub struct InitializeConfig<'info> {
     pub program_data: Box<Account<'info, ProgramData>>,
 
     pub system_program: Program<'info, System>,
-    pub token_program: Interface<'info, anchor_spl::token_interface::TokenInterface>,
+    pub token_program: Program<'info, Token>,
 }
 
 pub fn initialize_config_handler(
@@ -72,8 +76,6 @@ pub fn initialize_config_handler(
         max_interval_secs <= MAX_WINDOW_SECS && max_review_secs <= MAX_WINDOW_SECS && dispute_secs <= MAX_WINDOW_SECS,
         RecoraError::InvalidWindowBounds
     );
-    check_mint_extensions(&ctx.accounts.mint.to_account_info())?;
-
     let config = &mut ctx.accounts.config;
     config.authority = ctx.accounts.deployer.key();
     config.pending_authority = Pubkey::default();
@@ -89,37 +91,5 @@ pub fn initialize_config_handler(
     config.paused = false;
     config.treasury_bump = ctx.bumps.treasury;
 
-    Ok(())
-}
-
-/// Token-2022 extensions that do not move or block funds. Anything else
-/// (transfer fee, transfer hook, permanent delegate, default-frozen accounts,
-/// pausable, non-transferable, confidential transfers) would break the escrow:
-/// the vault could receive less than the charge records, or payouts could be
-/// blocked or taken out of the vault by a third party.
-const ALLOWED_MINT_EXTENSIONS: [ExtensionType; 9] = [
-    ExtensionType::MintCloseAuthority,
-    ExtensionType::InterestBearingConfig,
-    ExtensionType::ScaledUiAmount,
-    ExtensionType::MetadataPointer,
-    ExtensionType::TokenMetadata,
-    ExtensionType::GroupPointer,
-    ExtensionType::TokenGroup,
-    ExtensionType::GroupMemberPointer,
-    ExtensionType::TokenGroupMember,
-];
-
-fn check_mint_extensions(mint: &AccountInfo) -> Result<()> {
-    if *mint.owner != anchor_spl::token_2022::ID {
-        return Ok(());
-    }
-    let data = mint.try_borrow_data()?;
-    let state = StateWithExtensions::<Mint2022>::unpack(&data)?;
-    for extension in state.get_extension_types()? {
-        require!(
-            ALLOWED_MINT_EXTENSIONS.contains(&extension),
-            RecoraError::UnsupportedMint
-        );
-    }
     Ok(())
 }

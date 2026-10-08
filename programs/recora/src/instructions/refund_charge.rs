@@ -1,9 +1,10 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{transfer_checked, TransferChecked, TokenAccount, Mint};
+use anchor_spl::token::Token;
+use anchor_spl::token_interface::{TokenAccount, Mint};
 use crate::state::{Merchant, Subscription, Charge, ChargeState};
 use crate::constants::{SEED_MERCHANT, SEED_SUB, SEED_VAULT, SEED_CHARGE};
 use crate::errors::RecoraError;
-use crate::utils::canonical_ata;
+use crate::utils::{can_receive, canonical_ata, pay_out};
 use crate::events::ChargeRefunded;
 
 #[derive(Accounts)]
@@ -30,13 +31,14 @@ pub struct RefundCharge<'info> {
     )]
     pub vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
+    /// CHECK: the subscriber's canonical ATA; the token program validates it.
+    /// No owner check: on classic SPL the subscriber can hand the ATA to another key.
     #[account(
         mut,
-        // No owner check: on classic SPL the subscriber can hand the ATA to another
-        // key, which would block this instruction. The canonical address is enough.
-        constraint = subscriber_ata.key() == canonical_ata(&sub.subscriber, &vault.mint, &token_program.key()) @ RecoraError::WrongTokenAccount
+        address = canonical_ata(&sub.subscriber, &vault.mint, &anchor_spl::token::ID) @ RecoraError::WrongTokenAccount
     )]
-    pub subscriber_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub subscriber_ata: UncheckedAccount<'info>,
+
 
     #[account(
         mut,
@@ -56,18 +58,30 @@ pub struct RefundCharge<'info> {
     #[account(mut)]
     pub merchant_authority: Signer<'info>,
 
+    // After the merchant checks, so a foreign merchant fails as Unauthorized.
+    /// CHECK: must be merchant.payout_ata; receives the merchant's bond back.
+    #[account(
+        mut,
+        address = merchant.payout_ata @ RecoraError::WrongAccount
+    )]
+    pub merchant_ata: UncheckedAccount<'info>,
+
     pub mint: Box<InterfaceAccount<'info, Mint>>,
-    pub token_program: Interface<'info, anchor_spl::token_interface::TokenInterface>,
+    pub token_program: Program<'info, Token>,
 }
 
 pub fn refund_charge_handler(ctx: Context<RefundCharge>) -> Result<()> {
+    // The merchant can concede at any point before the charge ends, including
+    // after contesting; each bond goes back to whoever posted it.
     require!(
-        ctx.accounts.charge.state == ChargeState::Held || ctx.accounts.charge.state == ChargeState::Disputed,
+        matches!(ctx.accounts.charge.state, ChargeState::Held | ChargeState::Disputed | ChargeState::Contested),
         RecoraError::InvalidState
     );
 
     let amount = ctx.accounts.charge.amount;
-    
+    let subscriber_bond = ctx.accounts.charge.subscriber_bond;
+    let merchant_bond = ctx.accounts.charge.merchant_bond;
+
     let sub_bump = ctx.accounts.sub.bump;
     let plan_key = ctx.accounts.sub.plan;
     let subscriber_key = ctx.accounts.sub.subscriber;
@@ -79,21 +93,39 @@ pub fn refund_charge_handler(ctx: Context<RefundCharge>) -> Result<()> {
     ];
     let signer_seeds = &[&sub_seeds[..]];
 
-    if amount > 0 {
-        let cpi_accounts = TransferChecked {
-            from: ctx.accounts.vault.to_account_info(),
-            mint: ctx.accounts.mint.to_account_info(),
-            to: ctx.accounts.subscriber_ata.to_account_info(),
-            authority: ctx.accounts.sub.to_account_info(),
+    macro_rules! pay {
+        ($to:expr, $amount:expr) => {
+            pay_out(
+                &ctx.accounts.token_program.to_account_info(),
+                &ctx.accounts.vault.to_account_info(),
+                &ctx.accounts.mint.to_account_info(),
+                &$to.to_account_info(),
+                &ctx.accounts.sub.to_account_info(),
+                signer_seeds,
+                $amount,
+                ctx.accounts.mint.decimals,
+            )
         };
-        let cpi_ctx = CpiContext::new_with_signer(ctx.accounts.token_program.key(), cpi_accounts, signer_seeds);
-        transfer_checked(cpi_ctx, amount, ctx.accounts.mint.decimals)?;
     }
 
+    pay!(ctx.accounts.subscriber_ata, amount.checked_add(subscriber_bond).ok_or(RecoraError::MathOverflow)?)?;
+    // A closed or frozen payout account leaves the bond in the vault, swept to
+    // the subscriber at close_subscription.
+    if can_receive(&ctx.accounts.merchant_ata.to_account_info()) {
+        pay!(ctx.accounts.merchant_ata, merchant_bond)?;
+    }
+
+    let released = amount.checked_add(subscriber_bond).and_then(|x| x.checked_add(merchant_bond)).ok_or(RecoraError::MathOverflow)?;
     ctx.accounts.sub.open_charges = ctx.accounts.sub.open_charges.checked_sub(1).ok_or(RecoraError::MathOverflow)?;
-    ctx.accounts.sub.held_total = ctx.accounts.sub.held_total.checked_sub(amount).ok_or(RecoraError::MathOverflow)?;
+    ctx.accounts.sub.held_total = ctx.accounts.sub.held_total.checked_sub(released).ok_or(RecoraError::MathOverflow)?;
     ctx.accounts.charge.state = ChargeState::Refunded;
 
-    emit!(ChargeRefunded { charge: ctx.accounts.charge.key(), amount });
+    emit!(ChargeRefunded {
+        charge: ctx.accounts.charge.key(),
+        subscription: ctx.accounts.sub.key(),
+        amount,
+        subscriber_bond,
+        merchant_bond,
+    });
     Ok(())
 }

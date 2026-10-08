@@ -78,6 +78,7 @@ export type Subscription = {
   heldTotal: bigint;
   bump: number;
   vaultBump: number;
+  cyclesRemaining: bigint;
 };
 
 export type SubscriptionArgs = {
@@ -98,6 +99,7 @@ export type SubscriptionArgs = {
   heldTotal: number | bigint;
   bump: number;
   vaultBump: number;
+  cyclesRemaining: number | bigint;
 };
 
 /** Gets the encoder for {@link SubscriptionArgs} account data. */
@@ -122,6 +124,7 @@ export function getSubscriptionEncoder(): FixedSizeEncoder<SubscriptionArgs> {
       ["heldTotal", getU64Encoder()],
       ["bump", getU8Encoder()],
       ["vaultBump", getU8Encoder()],
+      ["cyclesRemaining", getU64Encoder()],
     ]),
     (value) => ({ ...value, discriminator: SUBSCRIPTION_DISCRIMINATOR }),
   );
@@ -148,6 +151,7 @@ export function getSubscriptionDecoder(): FixedSizeDecoder<Subscription> {
     ["heldTotal", getU64Decoder()],
     ["bump", getU8Decoder()],
     ["vaultBump", getU8Decoder()],
+    ["cyclesRemaining", getU64Decoder()],
   ]);
 }
 
@@ -213,5 +217,5 @@ export async function fetchAllMaybeSubscription(
 }
 
 export function getSubscriptionSize(): number {
-  return 207;
+  return 215;
 }

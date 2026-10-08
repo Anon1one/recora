@@ -5,26 +5,76 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+env:
+  SOLANA_VERSION: v3.1.14
+  ANCHOR_VERSION: 1.2.0
+
 jobs:
-  program:
-    name: Build program and run Rust tests
+  test:
+    name: Build, Rust tests, client drift, TypeScript tests, keeper smoke test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # rustup picks up rust-toolchain.toml (1.89.0) automatically.
+      # rustup picks up rust-toolchain.toml (1.89.0) inside the repository.
       - name: Install Solana CLI
         run: |
-          sh -c "$(curl -sSfL https://release.anza.xyz/v3.1.14/install)"
+          sh -c "$(curl -sSfL https://release.anza.xyz/${SOLANA_VERSION}/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
 
       - uses: Swatinem/rust-cache@v2
 
-      # The tests load target/deploy/recora.so, so build it first.
-      - name: Build program
-        working-directory: programs/recora
-        run: cargo-build-sbf
+      - name: Cache Anchor CLI
+        id: anchor-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/anchor
+          key: anchor-cli-${{ env.ANCHOR_VERSION }}-${{ runner.os }}
 
-      - name: Run tests
-        working-directory: programs/recora
-        run: cargo test
+      # Installed from outside the repository, so it builds with the runner's
+      # stable toolchain rather than the pinned one.
+      - name: Install Anchor CLI
+        if: steps.anchor-cache.outputs.cache-hit != 'true'
+        working-directory: ${{ runner.temp }}
+        run: cargo install anchor-cli --version "$ANCHOR_VERSION" --locked
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The same command as the README. Anchor 1.2 builds SBPFv3 by default,
+      # which the pinned validator and LiteSVM cannot load.
+      - name: Build program, IDL and types
+        run: pnpm build
+
+      - name: Program is SBPF v0 (ELF e_machine 263)
+        run: test "$(od -An -tu2 -j18 -N2 target/deploy/recora.so | tr -d ' ')" = 263
+
+      - name: Rust tests (LiteSVM)
+        run: pnpm test
+
+      - name: Generated client matches the program
+        run: pnpm codegen && git diff --exit-code -- clients
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: TypeScript tests and keeper smoke test (local validator)
+        run: |
+          solana-keygen new --no-bip39-passphrase --silent --force -o "$HOME/.config/solana/id.json"
+          solana-test-validator --reset --quiet \
+            --upgradeable-program ByzDYmPuV1FK7Z4RMGLgnqELFLZf3u2GoRSsB9bTndiu target/deploy/recora.so "$(solana address)" &
+          for i in $(seq 1 60); do solana -u http://127.0.0.1:8899 cluster-version && break; sleep 1; done
+          export ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 ANCHOR_WALLET="$HOME/.config/solana/id.json"
+          pnpm test:ts
+          pnpm test:keeper

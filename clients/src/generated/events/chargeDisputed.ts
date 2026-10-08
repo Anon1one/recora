@@ -21,6 +21,8 @@ import {
   getHiddenPrefixEncoder,
   getStructDecoder,
   getStructEncoder,
+  getU64Decoder,
+  getU64Encoder,
   type Address,
   type FixedSizeCodec,
   type FixedSizeDecoder,
@@ -39,17 +41,26 @@ export function getChargeDisputedEventDiscriminatorBytes(): ReadonlyUint8Array {
 
 export type ChargeDisputedEvent = {
   charge: Address;
+  subscription: Address;
   evidenceRef: ReadonlyUint8Array;
+  bond: bigint;
 };
 
-export type ChargeDisputedEventArgs = ChargeDisputedEvent;
+export type ChargeDisputedEventArgs = {
+  charge: Address;
+  subscription: Address;
+  evidenceRef: ReadonlyUint8Array;
+  bond: number | bigint;
+};
 
 /** Gets the encoder for {@link ChargeDisputedEventArgs} event data. */
 export function getChargeDisputedEventEncoder(): FixedSizeEncoder<ChargeDisputedEventArgs> {
   return getHiddenPrefixEncoder(
     getStructEncoder([
       ["charge", getAddressEncoder()],
+      ["subscription", getAddressEncoder()],
       ["evidenceRef", fixEncoderSize(getBytesEncoder(), 32)],
+      ["bond", getU64Encoder()],
     ]),
     [getConstantEncoder(CHARGE_DISPUTED_EVENT_DISCRIMINATOR)],
   );
@@ -60,7 +71,9 @@ export function getChargeDisputedEventDecoder(): FixedSizeDecoder<ChargeDisputed
   return getHiddenPrefixDecoder(
     getStructDecoder([
       ["charge", getAddressDecoder()],
+      ["subscription", getAddressDecoder()],
       ["evidenceRef", fixDecoderSize(getBytesDecoder(), 32)],
+      ["bond", getU64Decoder()],
     ]),
     [getConstantDecoder(CHARGE_DISPUTED_EVENT_DISCRIMINATOR)],
   );

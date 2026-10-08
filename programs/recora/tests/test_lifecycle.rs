@@ -43,6 +43,9 @@ const INSUFFICIENT_FEES: u32 = 6004;
 const STILL_ACTIVE: u32 = 6018;
 const INVALID_TERMS: u32 = 6007;
 const DISPUTE_TIMED_OUT: u32 = 6022;
+const INVALID_STATE: u32 = 6012;
+// The dispute bond equals the resolver fee: 2% of PRICE.
+const BOND: u64 = PRICE * 200 / 10_000;
 
 fn mock_mint(auth: &Pubkey) -> SolanaAccount {
     let mut d = vec![0u8; 82];
@@ -225,11 +228,34 @@ fn settle_ix(w: &W, sub: Pubkey, s: &Pubkey, c: u64) -> Ix {
         recora::instruction::SettleCharge {},
     )
 }
-fn dispute_ix(sub: Pubkey, signer: &Pubkey, c: u64) -> Ix {
+fn dispute_ix(w: &W, sub: Pubkey, signer: &Pubkey, c: u64) -> Ix {
     ix(
-        recora::accounts::DisputeCharge { charge: charge(&sub, c), sub, subscriber: *signer },
+        recora::accounts::DisputeCharge {
+            charge: charge(&sub, c), sub, vault: pda(&[SEED_VAULT, sub.as_ref()]), bond_source: w.sub_ata,
+            subscriber: *signer, mint: w.mint, token_program: anchor_spl::token::ID,
+        },
         recora::instruction::DisputeCharge { evidence_ref: [7; 32] },
     )
+}
+fn set_bal(w: &mut W, ta: &Pubkey, amount: u64) {
+    let mut a = w.svm.get_account(ta).unwrap();
+    a.data[64..72].copy_from_slice(&amount.to_le_bytes());
+    w.svm.set_account(*ta, a).unwrap();
+}
+/// The merchant matches the bond from its payout account (funded here).
+fn contest(w: &mut W, c: u64) -> std::result::Result<Vec<String>, String> {
+    let p = w.m_payout;
+    let b = bal(&w.svm, &p);
+    set_bal(w, &p, b + BOND);
+    let i = ix(
+        recora::accounts::ContestDispute {
+            charge: charge(&w.sub, c), sub: w.sub, vault: w.vault, merchant: w.merchant,
+            merchant_authority: w.m_auth.pubkey(), bond_source: p, mint: w.mint, token_program: anchor_spl::token::ID,
+        },
+        recora::instruction::ContestDispute {},
+    );
+    let m = w.m_auth.insecure_clone();
+    tx!(w, i, m)
 }
 fn k(w: &W) -> Keypair { w.keeper.insecure_clone() }
 
@@ -298,7 +324,7 @@ fn review_window_boundary_is_pinned() {
     warp(&mut w.svm, REVIEW as i64 - 1);
     fails_with(tx!(w, settle_ix(&w, w.sub, &s.pubkey(), 0), k(&w)), REVIEW_NOT_ELAPSED);
     warp(&mut w.svm, 1);
-    fails_with(tx!(w, dispute_ix(w.sub, &s.pubkey(), 0), s), REVIEW_ELAPSED);
+    fails_with(tx!(w, dispute_ix(&w, w.sub, &s.pubkey(), 0), s), REVIEW_ELAPSED);
     let logs = tx!(w, settle_ix(&w, w.sub, &s.pubkey(), 0), k(&w)).unwrap();
     let fee = PRICE * FEE_BPS / 10_000;
     assert_eq!(bal(&w.svm, &w.m_payout), PRICE - fee);
@@ -307,20 +333,25 @@ fn review_window_boundary_is_pinned() {
     assert_eq!(events(&logs).len(), 1);
 }
 
-/// REQ-12 / D4: dispute timeout refunds in full with no fee, and emits its own
-/// ChargeRefundedAfterTimeout event (18-settle-charge N3), not the merchant's ChargeRefunded.
+/// REQ-12 / D4: a dispute the merchant does not contest is refunded in full,
+/// bond included, with no fee, and emits its own ChargeRefundedAfterTimeout
+/// event (18-settle-charge N3), not the merchant's ChargeRefunded.
 #[test]
 fn dispute_timeout_refund_emits_its_own_event() {
     let mut w = billed();
     let s = w.subscriber.insecure_clone();
     // a non-subscriber cannot dispute; error is Anchor ConstraintSeeds, not Unauthorized as drawn
     let x = new_kp(&mut w.svm);
-    fails_with(tx!(w, dispute_ix(w.sub, &x.pubkey(), 0), x), CONSTRAINT_SEEDS);
-    tx!(w, dispute_ix(w.sub, &s.pubkey(), 0), s).unwrap();
+    fails_with(tx!(w, dispute_ix(&w, w.sub, &x.pubkey(), 0), x), CONSTRAINT_SEEDS);
     let before = bal(&w.svm, &w.sub_ata);
+    tx!(w, dispute_ix(&w, w.sub, &s.pubkey(), 0), s).unwrap();
+    assert_eq!(bal(&w.svm, &w.sub_ata), before - BOND);
+    assert_eq!(bal(&w.svm, &w.vault), PRICE + BOND);
     warp(&mut w.svm, DISPUTE as i64 - 1);
     fails_with(tx!(w, settle_ix(&w, w.sub, &s.pubkey(), 0), k(&w)), DISPUTE_NOT_TIMED_OUT);
     warp(&mut w.svm, 1);
+    // too late to contest
+    fails_with(contest(&mut w, 0), DISPUTE_TIMED_OUT);
     let logs = tx!(w, settle_ix(&w, w.sub, &s.pubkey(), 0), k(&w)).unwrap();
     assert_eq!(bal(&w.svm, &w.sub_ata), before + PRICE);
     assert_eq!(bal(&w.svm, &w.treasury), 0);
@@ -328,7 +359,10 @@ fn dispute_timeout_refund_emits_its_own_event() {
     assert_eq!(ev.len(), 1);
     assert_eq!(&ev[0][..8], ChargeRefundedAfterTimeout::DISCRIMINATOR);
     let e = ChargeRefundedAfterTimeout::deserialize(&mut &ev[0][8..]).unwrap();
-    assert_eq!((e.charge, e.subscription, e.amount), (charge(&w.sub, 0), w.sub, PRICE));
+    assert_eq!(
+        (e.charge, e.subscription, e.amount, e.subscriber_bond, e.merchant_bond),
+        (charge(&w.sub, 0), w.sub, PRICE, BOND, 0)
+    );
     let s_ = sub_state(&w, &w.sub);
     assert_eq!((s_.open_charges, s_.held_total), (0, 0));
 }
@@ -351,35 +385,47 @@ fn resolve_ix(w: &mut W, merchant_bps: u16) -> Ix {
     )
 }
 
-/// The resolver rules inside the dispute window, and the split is exact.
+/// The resolver rules on a contested dispute inside its window, and a full
+/// merchant win costs the subscriber its bond: the dispute was not free.
 #[test]
 fn resolver_rules_inside_the_dispute_window() {
     let mut w = billed();
     let s = w.subscriber.insecure_clone();
-    tx!(w, dispute_ix(w.sub, &s.pubkey(), 0), s).unwrap();
-    warp(&mut w.svm, DISPUTE as i64 - 1);
+    let start = bal(&w.svm, &w.sub_ata);
+    tx!(w, dispute_ix(&w, w.sub, &s.pubkey(), 0), s).unwrap();
+    // an uncontested dispute cannot be ruled on
     let (i, r) = (resolve_ix(&mut w, 10_000), w.resolver.insecure_clone());
+    fails_with(tx!(w, i, r), INVALID_STATE);
+    warp(&mut w.svm, DISPUTE as i64 - 1);
+    contest(&mut w, 0).unwrap();
+    warp(&mut w.svm, DISPUTE as i64 - 1);
+    let i = resolve_ix(&mut w, 10_000);
     tx!(w, i, r).unwrap();
-    // amount = 15e6; resolver 2% = 300_000; pot 14_700_000 all to merchant gross; fee 0.5% = 73_500
-    assert_eq!(bal(&w.svm, &ata(&r.pubkey(), &w.mint)), 300_000);
-    assert_eq!(bal(&w.svm, &w.treasury), 73_500);
-    assert_eq!(bal(&w.svm, &w.m_payout), 14_700_000 - 73_500);
+    // amount 15e6 all to the merchant, 0.5% fee = 75_000. The resolver gets one
+    // bond (300_000), all of it from the subscriber; the merchant's comes back.
+    assert_eq!(bal(&w.svm, &ata(&r.pubkey(), &w.mint)), BOND);
+    assert_eq!(bal(&w.svm, &w.treasury), 75_000);
+    assert_eq!(bal(&w.svm, &w.m_payout), PRICE - 75_000 + BOND);
+    assert_eq!(bal(&w.svm, &w.sub_ata), start - BOND);
     assert_eq!(bal(&w.svm, &w.vault), 0);
 }
 
-/// D4: once the dispute times out the resolver can no longer rule; only the
-/// timeout refund to the subscriber remains.
+/// D4: once a contested dispute times out the resolver can no longer rule;
+/// the subscriber gets the charge back and each side its bond.
 #[test]
 fn resolver_cannot_rule_after_the_timeout() {
     let mut w = billed();
     let s = w.subscriber.insecure_clone();
-    tx!(w, dispute_ix(w.sub, &s.pubkey(), 0), s).unwrap();
+    let start = bal(&w.svm, &w.sub_ata);
+    tx!(w, dispute_ix(&w, w.sub, &s.pubkey(), 0), s).unwrap();
+    contest(&mut w, 0).unwrap();
     warp(&mut w.svm, DISPUTE as i64);
     let (i, r) = (resolve_ix(&mut w, 10_000), w.resolver.insecure_clone());
     fails_with(tx!(w, i, r), DISPUTE_TIMED_OUT);
-    let before = bal(&w.svm, &w.sub_ata);
     tx!(w, settle_ix(&w, w.sub, &s.pubkey(), 0), k(&w)).unwrap();
-    assert_eq!(bal(&w.svm, &w.sub_ata), before + PRICE);
+    assert_eq!(bal(&w.svm, &w.sub_ata), start + PRICE);
+    assert_eq!(bal(&w.svm, &w.m_payout), BOND);
+    assert_eq!(bal(&w.svm, &w.vault), 0);
 }
 
 /// Subscribing for zero cycles is rejected.

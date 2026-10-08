@@ -21,6 +21,8 @@ import {
   getStructEncoder,
   getU16Decoder,
   getU16Encoder,
+  getU64Decoder,
+  getU64Encoder,
   type Address,
   type FixedSizeCodec,
   type FixedSizeDecoder,
@@ -39,17 +41,41 @@ export function getDisputeResolvedEventDiscriminatorBytes(): ReadonlyUint8Array 
 
 export type DisputeResolvedEvent = {
   charge: Address;
+  subscription: Address;
   splitMerchantBps: number;
+  merchantNet: bigint;
+  protocolFee: bigint;
+  subscriberShare: bigint;
+  resolverFee: bigint;
+  subscriberBondBack: bigint;
+  merchantBondBack: bigint;
 };
 
-export type DisputeResolvedEventArgs = DisputeResolvedEvent;
+export type DisputeResolvedEventArgs = {
+  charge: Address;
+  subscription: Address;
+  splitMerchantBps: number;
+  merchantNet: number | bigint;
+  protocolFee: number | bigint;
+  subscriberShare: number | bigint;
+  resolverFee: number | bigint;
+  subscriberBondBack: number | bigint;
+  merchantBondBack: number | bigint;
+};
 
 /** Gets the encoder for {@link DisputeResolvedEventArgs} event data. */
 export function getDisputeResolvedEventEncoder(): FixedSizeEncoder<DisputeResolvedEventArgs> {
   return getHiddenPrefixEncoder(
     getStructEncoder([
       ["charge", getAddressEncoder()],
+      ["subscription", getAddressEncoder()],
       ["splitMerchantBps", getU16Encoder()],
+      ["merchantNet", getU64Encoder()],
+      ["protocolFee", getU64Encoder()],
+      ["subscriberShare", getU64Encoder()],
+      ["resolverFee", getU64Encoder()],
+      ["subscriberBondBack", getU64Encoder()],
+      ["merchantBondBack", getU64Encoder()],
     ]),
     [getConstantEncoder(DISPUTE_RESOLVED_EVENT_DISCRIMINATOR)],
   );
@@ -60,7 +86,14 @@ export function getDisputeResolvedEventDecoder(): FixedSizeDecoder<DisputeResolv
   return getHiddenPrefixDecoder(
     getStructDecoder([
       ["charge", getAddressDecoder()],
+      ["subscription", getAddressDecoder()],
       ["splitMerchantBps", getU16Decoder()],
+      ["merchantNet", getU64Decoder()],
+      ["protocolFee", getU64Decoder()],
+      ["subscriberShare", getU64Decoder()],
+      ["resolverFee", getU64Decoder()],
+      ["subscriberBondBack", getU64Decoder()],
+      ["merchantBondBack", getU64Decoder()],
     ]),
     [getConstantDecoder(DISPUTE_RESOLVED_EVENT_DISCRIMINATOR)],
   );

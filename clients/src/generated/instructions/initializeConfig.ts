@@ -58,9 +58,9 @@ export function getInitializeConfigDiscriminatorBytes(): ReadonlyUint8Array {
 
 export type InitializeConfigInstruction<
   TProgram extends string = typeof RECORA_PROGRAM_ADDRESS,
+  TAccountMint extends string | AccountMeta<string> = string,
   TAccountConfig extends string | AccountMeta<string> = string,
   TAccountTreasury extends string | AccountMeta<string> = string,
-  TAccountMint extends string | AccountMeta<string> = string,
   TAccountDeployer extends string | AccountMeta<string> = string,
   TAccountProgram extends string | AccountMeta<string> =
     "ByzDYmPuV1FK7Z4RMGLgnqELFLZf3u2GoRSsB9bTndiu",
@@ -74,15 +74,15 @@ export type InitializeConfigInstruction<
   InstructionWithData<ReadonlyUint8Array> &
   InstructionWithAccounts<
     [
+      TAccountMint extends string
+        ? ReadonlyAccount<TAccountMint>
+        : TAccountMint,
       TAccountConfig extends string
         ? WritableAccount<TAccountConfig>
         : TAccountConfig,
       TAccountTreasury extends string
         ? WritableAccount<TAccountTreasury>
         : TAccountTreasury,
-      TAccountMint extends string
-        ? ReadonlyAccount<TAccountMint>
-        : TAccountMint,
       TAccountDeployer extends string
         ? WritableSignerAccount<TAccountDeployer> &
             AccountSignerMeta<TAccountDeployer>
@@ -164,9 +164,9 @@ export function getInitializeConfigInstructionDataCodec(): FixedSizeCodec<
 }
 
 export type InitializeConfigAsyncInput<
+  TAccountMint extends InstructionAccountInput = InstructionAccountInput,
   TAccountConfig extends InstructionAccountInput = InstructionAccountInput,
   TAccountTreasury extends InstructionAccountInput = InstructionAccountInput,
-  TAccountMint extends InstructionAccountInput = InstructionAccountInput,
   TAccountDeployer extends InstructionSignerInput = InstructionSignerInput,
   TAccountProgram extends InstructionAccountInput = InstructionAccountInput,
   TAccountProgramData extends InstructionAccountInput = InstructionAccountInput,
@@ -175,9 +175,9 @@ export type InitializeConfigAsyncInput<
   TAccountTokenProgram extends InstructionAccountInput =
     InstructionAccountInput,
 > = {
+  mint: TAccountMint;
   config?: TAccountConfig;
   treasury?: TAccountTreasury;
-  mint: TAccountMint;
   deployer: TAccountDeployer;
   program?: TAccountProgram;
   programData?: TAccountProgramData;
@@ -193,9 +193,9 @@ export type InitializeConfigAsyncInput<
 };
 
 export async function getInitializeConfigInstructionAsync<
+  TAccountMint extends InstructionAccountInput,
   TAccountConfig extends InstructionAccountInput,
   TAccountTreasury extends InstructionAccountInput,
-  TAccountMint extends InstructionAccountInput,
   TAccountDeployer extends InstructionSignerInput,
   TAccountProgram extends InstructionAccountInput,
   TAccountProgramData extends InstructionAccountInput,
@@ -204,9 +204,9 @@ export async function getInitializeConfigInstructionAsync<
   TProgramAddress extends Address = typeof RECORA_PROGRAM_ADDRESS,
 >(
   input: InitializeConfigAsyncInput<
+    TAccountMint,
     TAccountConfig,
     TAccountTreasury,
-    TAccountMint,
     TAccountDeployer,
     TAccountProgram,
     TAccountProgramData,
@@ -218,16 +218,16 @@ export async function getInitializeConfigInstructionAsync<
   InitializeConfigInstruction<
     TProgramAddress,
     ResolvedInstructionAccountMeta<
+      TAccountMint,
+      InstructionAccountInputAddress<TAccountMint>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountConfig,
       InstructionAccountInputAddress<TAccountConfig>
     >,
     ResolvedInstructionAccountMeta<
       TAccountTreasury,
       InstructionAccountInputAddress<TAccountTreasury>
-    >,
-    ResolvedInstructionAccountMeta<
-      TAccountMint,
-      InstructionAccountInputAddress<TAccountMint>
     >,
     ResolvedInstructionAccountMeta<
       TAccountDeployer,
@@ -259,13 +259,13 @@ export async function getInitializeConfigInstructionAsync<
 
   // Original accounts.
   const originalAccounts = {
+    mint: { value: input.mint ?? null, isSigner: false, isWritable: false },
     config: { value: input.config ?? null, isSigner: false, isWritable: true },
     treasury: {
       value: input.treasury ?? null,
       isSigner: false,
       isWritable: true,
     },
-    mint: { value: input.mint ?? null, isSigner: false, isWritable: false },
     deployer: {
       value: input.deployer ?? null,
       isSigner: true,
@@ -337,9 +337,9 @@ export async function getInitializeConfigInstructionAsync<
 
   return Object.freeze({
     accounts: [
+      getAccountMeta("mint", accounts.mint),
       getAccountMeta("config", accounts.config),
       getAccountMeta("treasury", accounts.treasury),
-      getAccountMeta("mint", accounts.mint),
       getAccountMeta("deployer", accounts.deployer),
       getAccountMeta("program", accounts.program),
       getAccountMeta("programData", accounts.programData),
@@ -353,16 +353,16 @@ export async function getInitializeConfigInstructionAsync<
   } as InitializeConfigInstruction<
     TProgramAddress,
     ResolvedInstructionAccountMeta<
+      TAccountMint,
+      InstructionAccountInputAddress<TAccountMint>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountConfig,
       InstructionAccountInputAddress<TAccountConfig>
     >,
     ResolvedInstructionAccountMeta<
       TAccountTreasury,
       InstructionAccountInputAddress<TAccountTreasury>
-    >,
-    ResolvedInstructionAccountMeta<
-      TAccountMint,
-      InstructionAccountInputAddress<TAccountMint>
     >,
     ResolvedInstructionAccountMeta<
       TAccountDeployer,
@@ -388,9 +388,9 @@ export async function getInitializeConfigInstructionAsync<
 }
 
 export type InitializeConfigInput<
+  TAccountMint extends InstructionAccountInput = InstructionAccountInput,
   TAccountConfig extends InstructionAccountInput = InstructionAccountInput,
   TAccountTreasury extends InstructionAccountInput = InstructionAccountInput,
-  TAccountMint extends InstructionAccountInput = InstructionAccountInput,
   TAccountDeployer extends InstructionSignerInput = InstructionSignerInput,
   TAccountProgram extends InstructionAccountInput = InstructionAccountInput,
   TAccountProgramData extends InstructionAccountInput = InstructionAccountInput,
@@ -399,9 +399,9 @@ export type InitializeConfigInput<
   TAccountTokenProgram extends InstructionAccountInput =
     InstructionAccountInput,
 > = {
+  mint: TAccountMint;
   config: TAccountConfig;
   treasury: TAccountTreasury;
-  mint: TAccountMint;
   deployer: TAccountDeployer;
   program?: TAccountProgram;
   programData: TAccountProgramData;
@@ -417,9 +417,9 @@ export type InitializeConfigInput<
 };
 
 export function getInitializeConfigInstruction<
+  TAccountMint extends InstructionAccountInput,
   TAccountConfig extends InstructionAccountInput,
   TAccountTreasury extends InstructionAccountInput,
-  TAccountMint extends InstructionAccountInput,
   TAccountDeployer extends InstructionSignerInput,
   TAccountProgram extends InstructionAccountInput,
   TAccountProgramData extends InstructionAccountInput,
@@ -428,9 +428,9 @@ export function getInitializeConfigInstruction<
   TProgramAddress extends Address = typeof RECORA_PROGRAM_ADDRESS,
 >(
   input: InitializeConfigInput<
+    TAccountMint,
     TAccountConfig,
     TAccountTreasury,
-    TAccountMint,
     TAccountDeployer,
     TAccountProgram,
     TAccountProgramData,
@@ -441,16 +441,16 @@ export function getInitializeConfigInstruction<
 ): InitializeConfigInstruction<
   TProgramAddress,
   ResolvedInstructionAccountMeta<
+    TAccountMint,
+    InstructionAccountInputAddress<TAccountMint>
+  >,
+  ResolvedInstructionAccountMeta<
     TAccountConfig,
     InstructionAccountInputAddress<TAccountConfig>
   >,
   ResolvedInstructionAccountMeta<
     TAccountTreasury,
     InstructionAccountInputAddress<TAccountTreasury>
-  >,
-  ResolvedInstructionAccountMeta<
-    TAccountMint,
-    InstructionAccountInputAddress<TAccountMint>
   >,
   ResolvedInstructionAccountMeta<
     TAccountDeployer,
@@ -481,13 +481,13 @@ export function getInitializeConfigInstruction<
 
   // Original accounts.
   const originalAccounts = {
+    mint: { value: input.mint ?? null, isSigner: false, isWritable: false },
     config: { value: input.config ?? null, isSigner: false, isWritable: true },
     treasury: {
       value: input.treasury ?? null,
       isSigner: false,
       isWritable: true,
     },
-    mint: { value: input.mint ?? null, isSigner: false, isWritable: false },
     deployer: {
       value: input.deployer ?? null,
       isSigner: true,
@@ -538,9 +538,9 @@ export function getInitializeConfigInstruction<
 
   return Object.freeze({
     accounts: [
+      getAccountMeta("mint", accounts.mint),
       getAccountMeta("config", accounts.config),
       getAccountMeta("treasury", accounts.treasury),
-      getAccountMeta("mint", accounts.mint),
       getAccountMeta("deployer", accounts.deployer),
       getAccountMeta("program", accounts.program),
       getAccountMeta("programData", accounts.programData),
@@ -554,16 +554,16 @@ export function getInitializeConfigInstruction<
   } as InitializeConfigInstruction<
     TProgramAddress,
     ResolvedInstructionAccountMeta<
+      TAccountMint,
+      InstructionAccountInputAddress<TAccountMint>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountConfig,
       InstructionAccountInputAddress<TAccountConfig>
     >,
     ResolvedInstructionAccountMeta<
       TAccountTreasury,
       InstructionAccountInputAddress<TAccountTreasury>
-    >,
-    ResolvedInstructionAccountMeta<
-      TAccountMint,
-      InstructionAccountInputAddress<TAccountMint>
     >,
     ResolvedInstructionAccountMeta<
       TAccountDeployer,
@@ -594,9 +594,9 @@ export type ParsedInitializeConfigInstruction<
 > = {
   programAddress: Address<TProgram>;
   accounts: {
-    config: TAccountMetas[0];
-    treasury: TAccountMetas[1];
-    mint: TAccountMetas[2];
+    mint: TAccountMetas[0];
+    config: TAccountMetas[1];
+    treasury: TAccountMetas[2];
     deployer: TAccountMetas[3];
     program: TAccountMetas[4];
     programData: TAccountMetas[5];
@@ -632,9 +632,9 @@ export function parseInitializeConfigInstruction<
   return {
     programAddress: instruction.programAddress,
     accounts: {
+      mint: getNextAccount(),
       config: getNextAccount(),
       treasury: getNextAccount(),
-      mint: getNextAccount(),
       deployer: getNextAccount(),
       program: getNextAccount(),
       programData: getNextAccount(),

@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_spl::token::Token;
 use anchor_spl::token_interface::{transfer_checked, close_account, TransferChecked, CloseAccount, TokenAccount, Mint};
 use crate::state::{Subscription, SubscriptionStatus};
 use crate::constants::{SEED_SUB, SEED_VAULT};
@@ -26,7 +27,7 @@ pub struct CloseSubscription<'info> {
     #[account(
         mut,
         constraint = subscriber_ata.owner == subscriber.key() @ RecoraError::WrongAccount,
-        constraint = subscriber_ata.key() == canonical_ata(&subscriber.key(), &vault.mint, &token_program.key()) @ RecoraError::WrongTokenAccount
+        constraint = subscriber_ata.key() == canonical_ata(&subscriber.key(), &vault.mint, &anchor_spl::token::ID) @ RecoraError::WrongTokenAccount
     )]
     pub subscriber_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
@@ -34,7 +35,7 @@ pub struct CloseSubscription<'info> {
     pub subscriber: Signer<'info>,
 
     pub mint: Box<InterfaceAccount<'info, Mint>>,
-    pub token_program: Interface<'info, anchor_spl::token_interface::TokenInterface>,
+    pub token_program: Program<'info, Token>,
 }
 
 pub fn close_subscription_handler(ctx: Context<CloseSubscription>) -> Result<()> {

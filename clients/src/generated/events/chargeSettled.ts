@@ -39,12 +39,16 @@ export function getChargeSettledEventDiscriminatorBytes(): ReadonlyUint8Array {
 
 export type ChargeSettledEvent = {
   charge: Address;
+  subscription: Address;
+  merchant: Address;
   merchantNet: bigint;
   protocolFee: bigint;
 };
 
 export type ChargeSettledEventArgs = {
   charge: Address;
+  subscription: Address;
+  merchant: Address;
   merchantNet: number | bigint;
   protocolFee: number | bigint;
 };
@@ -54,6 +58,8 @@ export function getChargeSettledEventEncoder(): FixedSizeEncoder<ChargeSettledEv
   return getHiddenPrefixEncoder(
     getStructEncoder([
       ["charge", getAddressEncoder()],
+      ["subscription", getAddressEncoder()],
+      ["merchant", getAddressEncoder()],
       ["merchantNet", getU64Encoder()],
       ["protocolFee", getU64Encoder()],
     ]),
@@ -66,6 +72,8 @@ export function getChargeSettledEventDecoder(): FixedSizeDecoder<ChargeSettledEv
   return getHiddenPrefixDecoder(
     getStructDecoder([
       ["charge", getAddressDecoder()],
+      ["subscription", getAddressDecoder()],
+      ["merchant", getAddressDecoder()],
       ["merchantNet", getU64Decoder()],
       ["protocolFee", getU64Decoder()],
     ]),
