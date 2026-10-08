@@ -71,6 +71,9 @@ pub struct Subscribe<'info> {
 }
 
 pub fn subscribe_handler(ctx: Context<Subscribe>, n_cycles: u64) -> Result<()> {
+    // Zero cycles would approve nothing and, when the ATA has another delegate,
+    // silently replace that approval with 0.
+    require!(n_cycles > 0, RecoraError::InvalidTerms);
     require!(ctx.accounts.subscriber.key() != ctx.accounts.merchant_authority.key(), RecoraError::PartyConflict);
     require!(ctx.accounts.subscriber.key() != ctx.accounts.plan.resolver, RecoraError::PartyConflict);
 

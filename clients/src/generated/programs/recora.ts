@@ -209,6 +209,7 @@ export enum RecoraEvent {
   ChargeDisputed,
   ChargePulled,
   ChargeRefunded,
+  ChargeRefundedAfterTimeout,
   ChargeSettled,
   ConfigUpdated,
   DisputeResolved,
@@ -257,6 +258,17 @@ export function identifyRecoraEvent(
     )
   ) {
     return RecoraEvent.ChargeRefunded;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([142, 24, 156, 248, 127, 219, 193, 201]),
+      ),
+      0,
+    )
+  ) {
+    return RecoraEvent.ChargeRefundedAfterTimeout;
   }
   if (
     containsBytes(

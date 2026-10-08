@@ -94,17 +94,16 @@ describe("Recora End-to-End Protocol Test Suite", () => {
       await connection.confirmTransaction({ signature: sig, ...latestBlockhash });
     }
 
-    // Create mock USDC mint
-    usdcMint = await createMint(
-      connection,
-      admin,
-      admin.publicKey,
-      null,
-      6
-    );
-
     // Compute canonical PDAs
     [configPda] = getConfigPda(program.programId);
+
+    // The protocol has one mint (config.mint). On a validator where the config
+    // already exists, reuse its mint; otherwise create a mock USDC mint.
+    const existing = await program.account.config.fetchNullable(configPda);
+    usdcMint = existing
+      ? existing.mint
+      : await createMint(connection, admin, admin.publicKey, null, 6);
+
     [treasuryAta] = getTreasuryPda(program.programId);
     [delegatePda] = getDelegatePda(program.programId);
 
@@ -258,9 +257,9 @@ describe("Recora End-to-End Protocol Test Suite", () => {
         sub: subscriptionPda,
         vault: vaultPda,
         plan: planPda,
-        merchant: merchantPda,
         config: configPda,
         subscriberAta,
+        merchantAuthority: merchantKeypair.publicKey,
         delegate: delegatePda,
         mint: usdcMint,
         subscriber: subscriberKeypair.publicKey,
@@ -300,12 +299,15 @@ describe("Recora End-to-End Protocol Test Suite", () => {
       .processBilling()
       .accounts({
         sub: subscriptionPda,
+        plan: planPda,
         charge: chargePda,
         vault: vaultPda,
         subscriberAta,
         delegate: delegatePda,
         mint: usdcMint,
         caller: admin.publicKey,
+        merchantAuthority: merchantKeypair.publicKey,
+        systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
       } as any)
       .rpc();
@@ -391,7 +393,9 @@ describe("Recora End-to-End Protocol Test Suite", () => {
       .cancelSubscription()
       .accounts({
         sub: subscriptionPda,
+        plan: planPda,
         subscriber: subscriberKeypair.publicKey,
+        merchantAuthority: merchantKeypair.publicKey,
       } as any)
       .signers([subscriberKeypair])
       .rpc();

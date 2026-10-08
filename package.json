@@ -7,7 +7,8 @@
     "codegen": "codama run client",
     "test": "anchor test",
     "keeper": "ts-node scripts/keeper.ts",
-    "lint": "eslint . --ext .ts"
+    "test:ts": "ts-mocha -p ./tsconfig.json -t 1000000 'tests/**/*.spec.ts'",
+    "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {
     "@anchor-lang/core": "^1.0.0",

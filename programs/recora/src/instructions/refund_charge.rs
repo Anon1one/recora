@@ -32,7 +32,8 @@ pub struct RefundCharge<'info> {
 
     #[account(
         mut,
-        constraint = subscriber_ata.owner == sub.subscriber @ RecoraError::WrongAccount,
+        // No owner check: on classic SPL the subscriber can hand the ATA to another
+        // key, which would block this instruction. The canonical address is enough.
         constraint = subscriber_ata.key() == canonical_ata(&sub.subscriber, &vault.mint, &token_program.key()) @ RecoraError::WrongTokenAccount
     )]
     pub subscriber_ata: Box<InterfaceAccount<'info, TokenAccount>>,
@@ -89,8 +90,8 @@ pub fn refund_charge_handler(ctx: Context<RefundCharge>) -> Result<()> {
         transfer_checked(cpi_ctx, amount, ctx.accounts.mint.decimals)?;
     }
 
-    ctx.accounts.sub.open_charges = ctx.accounts.sub.open_charges.checked_sub(1).unwrap();
-    ctx.accounts.sub.held_total = ctx.accounts.sub.held_total.checked_sub(amount).unwrap();
+    ctx.accounts.sub.open_charges = ctx.accounts.sub.open_charges.checked_sub(1).ok_or(RecoraError::MathOverflow)?;
+    ctx.accounts.sub.held_total = ctx.accounts.sub.held_total.checked_sub(amount).ok_or(RecoraError::MathOverflow)?;
     ctx.accounts.charge.state = ChargeState::Refunded;
 
     emit!(ChargeRefunded { charge: ctx.accounts.charge.key(), amount });

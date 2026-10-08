@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  program:
+    name: Build program and run Rust tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rustup picks up rust-toolchain.toml (1.89.0) automatically.
+      - name: Install Solana CLI
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v3.1.14/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The tests load target/deploy/recora.so, so build it first.
+      - name: Build program
+        working-directory: programs/recora
+        run: cargo-build-sbf
+
+      - name: Run tests
+        working-directory: programs/recora
+        run: cargo test

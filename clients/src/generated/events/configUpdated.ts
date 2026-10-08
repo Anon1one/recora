@@ -10,6 +10,8 @@ import {
   combineCodec,
   containsBytes,
   fixEncoderSize,
+  getAddressDecoder,
+  getAddressEncoder,
   getBooleanDecoder,
   getBooleanEncoder,
   getBytesEncoder,
@@ -21,6 +23,9 @@ import {
   getStructEncoder,
   getU16Decoder,
   getU16Encoder,
+  getU64Decoder,
+  getU64Encoder,
+  type Address,
   type FixedSizeCodec,
   type FixedSizeDecoder,
   type FixedSizeEncoder,
@@ -36,16 +41,43 @@ export function getConfigUpdatedEventDiscriminatorBytes(): ReadonlyUint8Array {
   );
 }
 
-export type ConfigUpdatedEvent = { feeBps: number; paused: boolean };
+export type ConfigUpdatedEvent = {
+  authority: Address;
+  pendingAuthority: Address;
+  feeBps: number;
+  paused: boolean;
+  minIntervalSecs: bigint;
+  maxIntervalSecs: bigint;
+  minReviewSecs: bigint;
+  maxReviewSecs: bigint;
+  disputeSecs: bigint;
+};
 
-export type ConfigUpdatedEventArgs = ConfigUpdatedEvent;
+export type ConfigUpdatedEventArgs = {
+  authority: Address;
+  pendingAuthority: Address;
+  feeBps: number;
+  paused: boolean;
+  minIntervalSecs: number | bigint;
+  maxIntervalSecs: number | bigint;
+  minReviewSecs: number | bigint;
+  maxReviewSecs: number | bigint;
+  disputeSecs: number | bigint;
+};
 
 /** Gets the encoder for {@link ConfigUpdatedEventArgs} event data. */
 export function getConfigUpdatedEventEncoder(): FixedSizeEncoder<ConfigUpdatedEventArgs> {
   return getHiddenPrefixEncoder(
     getStructEncoder([
+      ["authority", getAddressEncoder()],
+      ["pendingAuthority", getAddressEncoder()],
       ["feeBps", getU16Encoder()],
       ["paused", getBooleanEncoder()],
+      ["minIntervalSecs", getU64Encoder()],
+      ["maxIntervalSecs", getU64Encoder()],
+      ["minReviewSecs", getU64Encoder()],
+      ["maxReviewSecs", getU64Encoder()],
+      ["disputeSecs", getU64Encoder()],
     ]),
     [getConstantEncoder(CONFIG_UPDATED_EVENT_DISCRIMINATOR)],
   );
@@ -55,8 +87,15 @@ export function getConfigUpdatedEventEncoder(): FixedSizeEncoder<ConfigUpdatedEv
 export function getConfigUpdatedEventDecoder(): FixedSizeDecoder<ConfigUpdatedEvent> {
   return getHiddenPrefixDecoder(
     getStructDecoder([
+      ["authority", getAddressDecoder()],
+      ["pendingAuthority", getAddressDecoder()],
       ["feeBps", getU16Decoder()],
       ["paused", getBooleanDecoder()],
+      ["minIntervalSecs", getU64Decoder()],
+      ["maxIntervalSecs", getU64Decoder()],
+      ["minReviewSecs", getU64Decoder()],
+      ["maxReviewSecs", getU64Decoder()],
+      ["disputeSecs", getU64Decoder()],
     ]),
     [getConstantDecoder(CONFIG_UPDATED_EVENT_DISCRIMINATOR)],
   );

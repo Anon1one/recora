@@ -1,7 +1,11 @@
 use anchor_lang::prelude::*;
+use anchor_spl::token_2022::spl_token_2022::{
+    extension::{BaseStateWithExtensions, ExtensionType, StateWithExtensions},
+    state::Mint as Mint2022,
+};
 use anchor_spl::token_interface::{Mint, TokenAccount};
 use crate::state::Config;
-use crate::constants::{SEED_CONFIG, SEED_TREASURY};
+use crate::constants::{MAX_WINDOW_SECS, SEED_CONFIG, SEED_TREASURY};
 use crate::errors::RecoraError;
 
 #[derive(Accounts)]
@@ -64,6 +68,11 @@ pub fn initialize_config_handler(
         min_interval_secs > 0 && min_review_secs > 0 && dispute_secs > 0,
         RecoraError::InvalidWindowBounds
     );
+    require!(
+        max_interval_secs <= MAX_WINDOW_SECS && max_review_secs <= MAX_WINDOW_SECS && dispute_secs <= MAX_WINDOW_SECS,
+        RecoraError::InvalidWindowBounds
+    );
+    check_mint_extensions(&ctx.accounts.mint.to_account_info())?;
 
     let config = &mut ctx.accounts.config;
     config.authority = ctx.accounts.deployer.key();
@@ -80,5 +89,37 @@ pub fn initialize_config_handler(
     config.paused = false;
     config.treasury_bump = ctx.bumps.treasury;
 
+    Ok(())
+}
+
+/// Token-2022 extensions that do not move or block funds. Anything else
+/// (transfer fee, transfer hook, permanent delegate, default-frozen accounts,
+/// pausable, non-transferable, confidential transfers) would break the escrow:
+/// the vault could receive less than the charge records, or payouts could be
+/// blocked or taken out of the vault by a third party.
+const ALLOWED_MINT_EXTENSIONS: [ExtensionType; 9] = [
+    ExtensionType::MintCloseAuthority,
+    ExtensionType::InterestBearingConfig,
+    ExtensionType::ScaledUiAmount,
+    ExtensionType::MetadataPointer,
+    ExtensionType::TokenMetadata,
+    ExtensionType::GroupPointer,
+    ExtensionType::TokenGroup,
+    ExtensionType::GroupMemberPointer,
+    ExtensionType::TokenGroupMember,
+];
+
+fn check_mint_extensions(mint: &AccountInfo) -> Result<()> {
+    if *mint.owner != anchor_spl::token_2022::ID {
+        return Ok(());
+    }
+    let data = mint.try_borrow_data()?;
+    let state = StateWithExtensions::<Mint2022>::unpack(&data)?;
+    for extension in state.get_extension_types()? {
+        require!(
+            ALLOWED_MINT_EXTENSIONS.contains(&extension),
+            RecoraError::UnsupportedMint
+        );
+    }
     Ok(())
 }

@@ -9,6 +9,7 @@
 export * from "./chargeDisputed";
 export * from "./chargePulled";
 export * from "./chargeRefunded";
+export * from "./chargeRefundedAfterTimeout";
 export * from "./chargeSettled";
 export * from "./configUpdated";
 export * from "./disputeResolved";

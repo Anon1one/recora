@@ -17,6 +17,7 @@ pub struct CancelSubscription<'info> {
         mut,
         seeds = [SEED_PLAN, merchant_authority.key().as_ref(), plan.plan_id.to_le_bytes().as_ref()],
         bump = plan.bump,
+        constraint = plan.key() == sub.plan @ RecoraError::WrongAccount
     )]
     pub plan: Box<Account<'info, Plan>>,
 
@@ -34,7 +35,7 @@ pub fn cancel_subscription_handler(ctx: Context<CancelSubscription>) -> Result<(
     );
 
     if ctx.accounts.sub.status == SubscriptionStatus::Active {
-        ctx.accounts.plan.subs_count = ctx.accounts.plan.subs_count.checked_sub(1).unwrap();
+        ctx.accounts.plan.subs_count = ctx.accounts.plan.subs_count.checked_sub(1).ok_or(RecoraError::MathOverflow)?;
     }
 
     ctx.accounts.sub.status = SubscriptionStatus::Cancelled;
