@@ -127,7 +127,7 @@ test(
         maxIntervalSecs: "31536000",
         minReviewSecs: "1",
         maxReviewSecs: "604800",
-        disputeSecs: "60",
+        disputeSecs: "600",
       },
       admin,
     );
@@ -137,7 +137,7 @@ test(
       {
         price: "1000000",
         intervalSecs: "1",
-        reviewSecs: "30",
+        reviewSecs: "600",
         resolverFeeBps: 100,
         resolver: resolver.publicKey.toBase58(),
       },
