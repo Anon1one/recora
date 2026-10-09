@@ -149,6 +149,12 @@ ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 ANCHOR_WALLET=~/.config/solana/id.json
 ```
 The wallet must be the upgrade authority passed to the validator, because `initialize_config` checks it. The keeper smoke test runs after `test:ts` (it reuses the config), sets short windows and takes about a minute.
 
+**TypeScript (devnet happy path):**
+```bash
+DEVNET_RPC_URL=<devnet rpc url> ANCHOR_WALLET=~/.config/solana/id.json pnpm test:devnet
+```
+Runs merchant, plan, subscribe, two bill-and-settle cycles, cancel and close against the deployed program, then returns the leftover tokens and SOL to the wallet. All RPC calls share one paced queue (`DEVNET_RPC_GAP_MS`, default 400 ms) with backoff on 429/503, and transactions are confirmed by polling. The wallet must hold at least 2 tokens of `Config.mint`. `DEVNET_RPC_URL` can also be set in a gitignored `.env.devnet`.
+
 ### 4. Run Autonomous Keeper Daemon
 ```bash
 ANCHOR_PROVIDER_URL=<rpc url> ANCHOR_WALLET=<keypair path> pnpm keeper
