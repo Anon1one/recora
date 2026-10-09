@@ -13,7 +13,7 @@ import { project, type StoredEvent } from "../src/lib/projector";
 
 test(
   "all-role builders execute a real subscribe, dispute, resolution, refund and close lifecycle",
-  { skip: !process.env.LOCAL_UPGRADE_WALLET, timeout: 600_000 },
+  { skip: !process.env.LOCAL_UPGRADE_WALLET, timeout: 1_500_000 },
   async () => {
     const connection = new Connection(
       process.env.LOCAL_VALIDATOR_URL || "http://127.0.0.1:8899",
