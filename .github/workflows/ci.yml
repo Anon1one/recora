@@ -78,3 +78,14 @@ jobs:
           export ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 ANCHOR_WALLET="$HOME/.config/solana/id.json"
           pnpm test:ts
           pnpm test:keeper
+
+      - name: Application transaction builders (isolated local validator)
+        run: |
+          solana-test-validator --quiet --ledger "$RUNNER_TEMP/recora-app-ledger" \
+            --rpc-port 18999 --faucet-port 19900 --gossip-port 18000 \
+            --dynamic-port-range 18001-18100 \
+            --upgradeable-program ByzDYmPuV1FK7Z4RMGLgnqELFLZf3u2GoRSsB9bTndiu target/deploy/recora.so "$(solana address)" &
+          for i in $(seq 1 60); do solana -u http://127.0.0.1:18999 cluster-version && break; sleep 1; done
+          export LOCAL_UPGRADE_WALLET="$HOME/.config/solana/id.json"
+          export LOCAL_VALIDATOR_URL=http://127.0.0.1:18999
+          pnpm --filter @recora/web test:chain

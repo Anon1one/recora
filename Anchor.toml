@@ -8,6 +8,9 @@ skip-lint = false
 [programs.localnet]
 recora = "ByzDYmPuV1FK7Z4RMGLgnqELFLZf3u2GoRSsB9bTndiu"
 
+[programs.devnet]
+recora = "ByzDYmPuV1FK7Z4RMGLgnqELFLZf3u2GoRSsB9bTndiu"
+
 [provider]
 cluster = "localnet"
 wallet = "~/.config/solana/id.json"

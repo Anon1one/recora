@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "dev:web": "pnpm --filter @recora/web dev",
+    "build:web": "pnpm --filter @recora/web build",
+    "test:web": "pnpm --filter @recora/web test",
+    "typecheck:web": "pnpm --filter @recora/web typecheck",
     "build": "anchor build --arch v0",
     "codegen": "codama run client",
     "test": "cd programs/recora && cargo test --locked",

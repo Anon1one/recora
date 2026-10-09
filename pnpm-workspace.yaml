@@ -1,0 +1,7 @@
+packages:
+  - clients
+  - apps/*
+
+# Keep installs compatible with strict release-age policies.
+overrides:
+  baseline-browser-mapping: 2.11.27

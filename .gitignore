@@ -6,3 +6,9 @@ node_modules
 test-ledger
 .yarn
 .surfpool
+.next
+*.tsbuildinfo
+.env*
+!.env.example
+playwright-report
+test-results
