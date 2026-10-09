@@ -4,6 +4,14 @@ A production-grade, non-custodial recurring pull-payment and escrow protocol on 
 
 ---
 
+## Application: Next.js, Neon, and Helius
+
+The wallet-based console in `apps/web` supports merchants, subscribers, resolvers, and administrators. Next.js serves the read API, unsigned transaction builders, Helius devnet receiver, and durable Postgres jobs. The existing generated client supplies protocol codecs and builders; the keeper still performs billing and settlement.
+
+Run `pnpm dev:web` and `pnpm --filter @recora/web jobs` after configuring `apps/web/.env.local` and applying `pnpm --filter @recora/web db:migrate`. Neon is used in local development and hosted environments.
+
+See [application setup and API contracts](docs/APPLICATION.md) for webhook registration, wallet flows, scheduling, and validation.
+
 ## Architecture Overview
 
 ```mermaid
