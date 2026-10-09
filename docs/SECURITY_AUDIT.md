@@ -173,7 +173,7 @@ $$\forall \text{ sub}_i, \quad \text{Vault}_i = \text{PDA}(\text{"vault"}, \text
 
 The vault signs transfers with the subscription's seeds `[SEED_SUB, plan, subscriber, &[bump]]`, so tokens in $\text{Vault}_i$ can never pay obligations of $\text{Vault}_j$.
 
-`held_total` counts every open charge's amount plus the bonds posted on it. Every exit releases exactly the charge plus its bonds and lowers `held_total` by the same sum; a bond that cannot be returned to a closed or frozen merchant account stays in the vault and is swept to the subscriber at close. So $\text{vault.amount} \ge \text{held\_total}$ always holds. This relies on the vault receiving the full amount on every transfer, which classic SPL Token guarantees.
+`held_total` counts every open charge's amount plus the bonds posted on it. Every exit releases exactly the charge plus its bonds and lowers `held_total` by the same sum; a bond that cannot be returned to a closed or frozen merchant account stays in the vault and is swept to the subscriber at close. So $`\text{vault.amount} \ge \text{held\_total}`$ always holds. This relies on the vault receiving the full amount on every transfer, which classic SPL Token guarantees.
 
 ### 4.2 Keeper Rent Neutrality
 When a keeper calls `process_billing` it pays rent for the new `Charge` and is recorded as `charge.rent_payer`. Every exit returns that rent:
@@ -190,14 +190,16 @@ $$\text{Net Rent Cost for Keeper} = 0 \text{ SOL (transaction fees only)}$$
 Fee splits use `u128` intermediates. Every `checked_*` operation returns `MathOverflow` instead of panicking; `merchant.total_revenue` is a statistic and saturates, so it can never block a payout. Time windows are converted with `i64::try_from` and are capped at `MAX_WINDOW_SECS` (ten years), so timestamp maths cannot wrap.
 
 ### 4.4 Rulings, Bonds and Rounding
-`split_ruling` in [`resolve_dispute.rs`](../programs/recora/src/instructions/resolve_dispute.rs) computes a ruling from the charge `amount`, the two bonds (each equal to $B = \lfloor \text{amount} \times \text{resolver\_bps} / 10{,}000 \rfloor$) and `merchant_bps`:
+`split_ruling` in [`resolve_dispute.rs`](../programs/recora/src/instructions/resolve_dispute.rs) computes a ruling from the charge `amount`, the two bonds (each equal to $`B = \lfloor \text{amount} \times \text{resolver\_bps} / 10{,}000 \rfloor`$) and `merchant_bps`:
 
-1. `merchant_gross` = $\lfloor \text{amount} \times \text{merchant\_bps} / 10{,}000 \rfloor$; $\text{subscriber\_share} = \text{amount} - \text{merchant\_gross}$.
-2. `protocol_fee` = $\lfloor \text{merchant\_gross} \times \text{fee\_bps} / 10{,}000 \rfloor$ (0 while the treasury is frozen); $\text{merchant\_net} = \text{merchant\_gross} - \text{protocol\_fee}$.
-3. The subscriber pays $\lfloor B \times \text{merchant\_bps} / 10{,}000 \rfloor$ of the resolver fee out of its bond and the merchant pays the rest out of its own; the resolver receives exactly $B$, and each side gets the unused part of its bond back.
+1. `merchant_gross` = $`\lfloor \text{amount} \times \text{merchant\_bps} / 10{,}000 \rfloor`$; $`\text{subscriber\_share} = \text{amount} - \text{merchant\_gross}`$.
+2. `protocol_fee` = $`\lfloor \text{merchant\_gross} \times \text{fee\_bps} / 10{,}000 \rfloor`$ (0 while the treasury is frozen); $`\text{merchant\_net} = \text{merchant\_gross} - \text{protocol\_fee}`$.
+3. The subscriber pays $`\lfloor B \times \text{merchant\_bps} / 10{,}000 \rfloor`$ of the resolver fee out of its bond and the merchant pays the rest out of its own; the resolver receives exactly $B$, and each side gets the unused part of its bond back.
 
 **Conservation:**
-$$\text{resolver\_fee} + \text{protocol\_fee} + \text{merchant\_net} + \text{subscriber\_share} + \text{bonds returned} \equiv \text{amount} + 2B$$
+```math
+\text{resolver\_fee} + \text{protocol\_fee} + \text{merchant\_net} + \text{subscriber\_share} + \text{bonds returned} \equiv \text{amount} + 2B
+```
 
 The only rounding on the charge is the floor of `merchant_gross`, so its dust goes to the subscriber; the protocol-fee floor stays with the merchant. No dust stays in the vault. `rulings_move_exactly_the_charge_and_both_bonds` checks every balance for six splits, and `split_ruling_conserves_value` checks the identity over a grid of amounts, bonds and splits.
 

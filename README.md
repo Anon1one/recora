@@ -31,14 +31,14 @@ flowchart TD
     MerchSigner -->|REQ-04| Merchant
     MerchSigner -->|REQ-05| Plan
     SubSigner -->|REQ-06/07| Sub
-    SubSigner -->|REQ-07 (Approve)| Delegate
-    Keeper -->|REQ-08/09 (Pull/Lapse)| Sub
-    SubSigner -->|REQ-10 (Dispute + bond)| Charge
-    MerchSigner -->|REQ-10b (Contest + bond)| Charge
-    Keeper -->|REQ-11/12 (Settle/Timeout)| Charge
-    MerchSigner -->|REQ-13 (Refund)| Charge
-    ResolverSigner -->|REQ-14 (Ruling Split)| Charge
-    SubSigner -->|REQ-15/16 (Cancel/Close)| Sub
+    SubSigner -->|"REQ-07 (Approve)"| Delegate
+    Keeper -->|"REQ-08/09 (Pull/Lapse)"| Sub
+    SubSigner -->|"REQ-10 (Dispute + bond)"| Charge
+    MerchSigner -->|"REQ-10b (Contest + bond)"| Charge
+    Keeper -->|"REQ-11/12 (Settle/Timeout)"| Charge
+    MerchSigner -->|"REQ-13 (Refund)"| Charge
+    ResolverSigner -->|"REQ-14 (Ruling Split)"| Charge
+    SubSigner -->|"REQ-15/16 (Cancel/Close)"| Sub
 ```
 
 ---
@@ -168,6 +168,8 @@ A publication-grade security audit is documented in [`docs/SECURITY_AUDIT.md`](d
 - **STRIDE Threat Modeling** across all 5 protocol actors.
 - **Findings record:** every finding from the initial assessment and the follow-up reviews, with the fix and its regression test.
 - **Invariant Proofs**: Escrow Vault Isolation, Keeper Rent Neutrality, and Conservation of Tokens:
-  $$\text{resolver\_fee} + \text{protocol\_fee} + \text{merchant\_net} + \text{subscriber\_share} + \text{bonds returned} \equiv \text{amount} + 2 \times \text{bond}$$
+  ```math
+  \text{resolver\_fee} + \text{protocol\_fee} + \text{merchant\_net} + \text{subscriber\_share} + \text{bonds returned} \equiv \text{amount} + 2 \times \text{bond}
+  ```
 - **Rounding**: the floor of the merchant's gross share is the only rounding on a charge, and its dust goes to the subscriber; the protocol-fee floor stays with the merchant.
 - **Known limitations** that are deliberate design choices (one delegate per token account, catch-up billing, one classic SPL mint per deployment).
