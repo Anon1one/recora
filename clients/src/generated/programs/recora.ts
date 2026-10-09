@@ -54,8 +54,9 @@ import {
   getAcceptAuthorityInstruction,
   getCancelSubscriptionInstruction,
   getCloseSubscriptionInstructionAsync,
+  getContestDisputeInstructionAsync,
   getCreatePlanInstructionAsync,
-  getDisputeChargeInstruction,
+  getDisputeChargeInstructionAsync,
   getInitializeConfigInstructionAsync,
   getInitializeMerchantInstructionAsync,
   getProcessBillingInstructionAsync,
@@ -71,6 +72,7 @@ import {
   parseAcceptAuthorityInstruction,
   parseCancelSubscriptionInstruction,
   parseCloseSubscriptionInstruction,
+  parseContestDisputeInstruction,
   parseCreatePlanInstruction,
   parseDisputeChargeInstruction,
   parseInitializeConfigInstruction,
@@ -88,13 +90,15 @@ import {
   type AcceptAuthorityInput,
   type CancelSubscriptionInput,
   type CloseSubscriptionAsyncInput,
+  type ContestDisputeAsyncInput,
   type CreatePlanAsyncInput,
-  type DisputeChargeInput,
+  type DisputeChargeAsyncInput,
   type InitializeConfigAsyncInput,
   type InitializeMerchantAsyncInput,
   type ParsedAcceptAuthorityInstruction,
   type ParsedCancelSubscriptionInstruction,
   type ParsedCloseSubscriptionInstruction,
+  type ParsedContestDisputeInstruction,
   type ParsedCreatePlanInstruction,
   type ParsedDisputeChargeInstruction,
   type ParsedInitializeConfigInstruction,
@@ -212,6 +216,7 @@ export enum RecoraEvent {
   ChargeRefundedAfterTimeout,
   ChargeSettled,
   ConfigUpdated,
+  DisputeContested,
   DisputeResolved,
   FeesWithdrawn,
   MerchantInitialized,
@@ -291,6 +296,17 @@ export function identifyRecoraEvent(
     )
   ) {
     return RecoraEvent.ConfigUpdated;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([211, 213, 205, 25, 215, 147, 127, 157]),
+      ),
+      0,
+    )
+  ) {
+    return RecoraEvent.DisputeContested;
   }
   if (
     containsBytes(
@@ -389,6 +405,7 @@ export enum RecoraInstruction {
   AcceptAuthority,
   CancelSubscription,
   CloseSubscription,
+  ContestDispute,
   CreatePlan,
   DisputeCharge,
   InitializeConfig,
@@ -441,6 +458,17 @@ export function identifyRecoraInstruction(
     )
   ) {
     return RecoraInstruction.CloseSubscription;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([177, 171, 253, 54, 179, 123, 7, 246]),
+      ),
+      0,
+    )
+  ) {
+    return RecoraInstruction.ContestDispute;
   }
   if (
     containsBytes(
@@ -615,6 +643,9 @@ export type ParsedRecoraInstruction<
       instructionType: RecoraInstruction.CloseSubscription;
     } & ParsedCloseSubscriptionInstruction<TProgram>)
   | ({
+      instructionType: RecoraInstruction.ContestDispute;
+    } & ParsedContestDisputeInstruction<TProgram>)
+  | ({
       instructionType: RecoraInstruction.CreatePlan;
     } & ParsedCreatePlanInstruction<TProgram>)
   | ({
@@ -681,6 +712,13 @@ export function parseRecoraInstruction<TProgram extends string>(
       return {
         instructionType: RecoraInstruction.CloseSubscription,
         ...parseCloseSubscriptionInstruction(instruction),
+      };
+    }
+    case RecoraInstruction.ContestDispute: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: RecoraInstruction.ContestDispute,
+        ...parseContestDisputeInstruction(instruction),
       };
     }
     case RecoraInstruction.CreatePlan: {
@@ -823,13 +861,17 @@ export type RecoraPluginInstructions = {
     input: CloseSubscriptionAsyncInput,
   ) => ReturnType<typeof getCloseSubscriptionInstructionAsync> &
     SelfPlanAndSendFunctions;
+  contestDispute: (
+    input: ContestDisputeAsyncInput,
+  ) => ReturnType<typeof getContestDisputeInstructionAsync> &
+    SelfPlanAndSendFunctions;
   createPlan: (
     input: CreatePlanAsyncInput,
   ) => ReturnType<typeof getCreatePlanInstructionAsync> &
     SelfPlanAndSendFunctions;
   disputeCharge: (
-    input: DisputeChargeInput,
-  ) => ReturnType<typeof getDisputeChargeInstruction> &
+    input: DisputeChargeAsyncInput,
+  ) => ReturnType<typeof getDisputeChargeInstructionAsync> &
     SelfPlanAndSendFunctions;
   initializeConfig: (
     input: InitializeConfigAsyncInput,
@@ -925,6 +967,11 @@ export function recoraProgram() {
               client,
               getCloseSubscriptionInstructionAsync(input),
             ),
+          contestDispute: (input) =>
+            addSelfPlanAndSendFunctions(
+              client,
+              getContestDisputeInstructionAsync(input),
+            ),
           createPlan: (input) =>
             addSelfPlanAndSendFunctions(
               client,
@@ -933,7 +980,7 @@ export function recoraProgram() {
           disputeCharge: (input) =>
             addSelfPlanAndSendFunctions(
               client,
-              getDisputeChargeInstruction(input),
+              getDisputeChargeInstructionAsync(input),
             ),
           initializeConfig: (input) =>
             addSelfPlanAndSendFunctions(

@@ -44,7 +44,10 @@ pub enum RecoraError {
     ChargesOutstanding,
     #[msg("Math calculation overflow or underflow")]
     MathOverflow,
-    #[msg("Mint has a Token-2022 extension the escrow cannot handle")]
+    // No longer raised: initialize_config types the mint as a classic SPL mint,
+    // so a Token-2022 mint fails as AccountOwnedByWrongProgram. Kept so the
+    // codes after it do not change.
+    #[msg("The protocol mint must be a classic SPL Token mint")]
     UnsupportedMint,
     #[msg("Dispute timeout has passed; only the timeout refund remains")]
     DisputeTimedOut,

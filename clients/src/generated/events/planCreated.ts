@@ -19,6 +19,8 @@ import {
   getHiddenPrefixEncoder,
   getStructDecoder,
   getStructEncoder,
+  getU16Decoder,
+  getU16Encoder,
   getU64Decoder,
   getU64Encoder,
   type Address,
@@ -37,16 +39,31 @@ export function getPlanCreatedEventDiscriminatorBytes(): ReadonlyUint8Array {
   );
 }
 
-export type PlanCreatedEvent = { plan: Address; planId: bigint };
+export type PlanCreatedEvent = {
+  plan: Address;
+  merchant: Address;
+  planId: bigint;
+  feeBps: number;
+  disputeSecs: bigint;
+};
 
-export type PlanCreatedEventArgs = { plan: Address; planId: number | bigint };
+export type PlanCreatedEventArgs = {
+  plan: Address;
+  merchant: Address;
+  planId: number | bigint;
+  feeBps: number;
+  disputeSecs: number | bigint;
+};
 
 /** Gets the encoder for {@link PlanCreatedEventArgs} event data. */
 export function getPlanCreatedEventEncoder(): FixedSizeEncoder<PlanCreatedEventArgs> {
   return getHiddenPrefixEncoder(
     getStructEncoder([
       ["plan", getAddressEncoder()],
+      ["merchant", getAddressEncoder()],
       ["planId", getU64Encoder()],
+      ["feeBps", getU16Encoder()],
+      ["disputeSecs", getU64Encoder()],
     ]),
     [getConstantEncoder(PLAN_CREATED_EVENT_DISCRIMINATOR)],
   );
@@ -57,7 +74,10 @@ export function getPlanCreatedEventDecoder(): FixedSizeDecoder<PlanCreatedEvent>
   return getHiddenPrefixDecoder(
     getStructDecoder([
       ["plan", getAddressDecoder()],
+      ["merchant", getAddressDecoder()],
       ["planId", getU64Decoder()],
+      ["feeBps", getU16Decoder()],
+      ["disputeSecs", getU64Decoder()],
     ]),
     [getConstantDecoder(PLAN_CREATED_EVENT_DISCRIMINATOR)],
   );

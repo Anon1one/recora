@@ -26,4 +26,8 @@ pub struct Subscription {
     pub held_total: u64,
     pub bump: u8,
     pub vault_bump: u8,
+    // Cycles this subscription may still be billed (n_cycles at subscribe).
+    // The delegate allowance is shared by all of a wallet's subscriptions, so
+    // this is what keeps each one to the cycles its subscriber approved.
+    pub cycles_remaining: u64,
 }

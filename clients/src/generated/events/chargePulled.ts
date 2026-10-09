@@ -39,12 +39,14 @@ export function getChargePulledEventDiscriminatorBytes(): ReadonlyUint8Array {
 
 export type ChargePulledEvent = {
   charge: Address;
+  subscription: Address;
   cycle: bigint;
   amount: bigint;
 };
 
 export type ChargePulledEventArgs = {
   charge: Address;
+  subscription: Address;
   cycle: number | bigint;
   amount: number | bigint;
 };
@@ -54,6 +56,7 @@ export function getChargePulledEventEncoder(): FixedSizeEncoder<ChargePulledEven
   return getHiddenPrefixEncoder(
     getStructEncoder([
       ["charge", getAddressEncoder()],
+      ["subscription", getAddressEncoder()],
       ["cycle", getU64Encoder()],
       ["amount", getU64Encoder()],
     ]),
@@ -66,6 +69,7 @@ export function getChargePulledEventDecoder(): FixedSizeDecoder<ChargePulledEven
   return getHiddenPrefixDecoder(
     getStructDecoder([
       ["charge", getAddressDecoder()],
+      ["subscription", getAddressDecoder()],
       ["cycle", getU64Decoder()],
       ["amount", getU64Decoder()],
     ]),

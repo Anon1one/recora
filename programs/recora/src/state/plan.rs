@@ -12,4 +12,8 @@ pub struct Plan {
     pub resolver_fee_bps: u16,
     pub subs_count: u64,
     pub bump: u8,
+    // Snapshotted from Config at create_plan, so the merchant signs them and a
+    // later config change only applies to plans created after it.
+    pub fee_bps: u16,
+    pub dispute_secs: u64,
 }

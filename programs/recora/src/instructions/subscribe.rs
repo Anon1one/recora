@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_spl::token::Token;
 use anchor_spl::token_interface::{approve, Approve, TokenAccount};
 use crate::state::{Config, Plan, Subscription, SubscriptionStatus};
 use crate::constants::{SEED_CONFIG, SEED_PLAN, SEED_SUB, SEED_VAULT, SEED_DELEGATE};
@@ -11,7 +12,7 @@ pub struct Subscribe<'info> {
     #[account(
         init,
         payer = subscriber,
-        space = 8 + 32 + 32 + 32 + 1 + 8 + 8 + 8 + 8 + 32 + 2 + 2 + 8 + 8 + 8 + 8 + 1 + 1,
+        space = 8 + 32 + 32 + 32 + 1 + 8 + 8 + 8 + 8 + 32 + 2 + 2 + 8 + 8 + 8 + 8 + 1 + 1 + 8,
         seeds = [SEED_SUB, plan.key().as_ref(), subscriber.key().as_ref()],
         bump
     )]
@@ -67,7 +68,7 @@ pub struct Subscribe<'info> {
     pub mint: UncheckedAccount<'info>,
 
     pub system_program: Program<'info, System>,
-    pub token_program: Interface<'info, anchor_spl::token_interface::TokenInterface>,
+    pub token_program: Program<'info, Token>,
 }
 
 pub fn subscribe_handler(ctx: Context<Subscribe>, n_cycles: u64) -> Result<()> {
@@ -98,16 +99,17 @@ pub fn subscribe_handler(ctx: Context<Subscribe>, n_cycles: u64) -> Result<()> {
     sub.price = plan.price;
     sub.interval_secs = plan.interval_secs;
     sub.review_secs = plan.review_secs;
-    sub.dispute_secs = config.dispute_secs;
+    sub.dispute_secs = plan.dispute_secs;
     sub.resolver = plan.resolver;
     sub.resolver_fee_bps = plan.resolver_fee_bps;
-    sub.fee_bps = config.fee_bps;
+    sub.fee_bps = plan.fee_bps;
     sub.next_billing_ts = Clock::get()?.unix_timestamp;
     sub.current_cycle = 0;
     sub.open_charges = 0;
     sub.held_total = 0;
     sub.bump = ctx.bumps.sub;
     sub.vault_bump = ctx.bumps.vault;
+    sub.cycles_remaining = n_cycles;
 
     plan.subs_count = plan.subs_count.checked_add(1).ok_or(RecoraError::MathOverflow)?;
 
@@ -127,6 +129,11 @@ pub fn subscribe_handler(ctx: Context<Subscribe>, n_cycles: u64) -> Result<()> {
     let cpi_ctx = CpiContext::new(ctx.accounts.token_program.key(), cpi_accounts);
     approve(cpi_ctx, new_allowance)?;
 
-    emit!(Subscribed { subscription: sub.key() });
+    emit!(Subscribed {
+        subscription: sub.key(),
+        plan: sub.plan,
+        subscriber: sub.subscriber,
+        n_cycles,
+    });
     Ok(())
 }

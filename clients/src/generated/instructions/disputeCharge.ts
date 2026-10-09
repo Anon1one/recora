@@ -26,18 +26,21 @@ import {
   type Instruction,
   type InstructionWithAccounts,
   type InstructionWithData,
+  type ReadonlyAccount,
   type ReadonlyUint8Array,
   type WritableAccount,
   type WritableSignerAccount,
 } from "@solana/kit";
 import {
   getAccountMetaFactory,
+  getAddressFromResolvedInstructionAccount,
   type InstructionAccountInput,
   type InstructionAccountInputAddress,
   type InstructionSignerInput,
   type ResolvedInstructionAccount,
   type ResolvedInstructionAccountMeta,
 } from "@solana/program-client-core";
+import { findVaultPda } from "../pdas";
 import { RECORA_PROGRAM_ADDRESS } from "../programs";
 
 export const DISPUTE_CHARGE_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([
@@ -54,7 +57,12 @@ export type DisputeChargeInstruction<
   TProgram extends string = typeof RECORA_PROGRAM_ADDRESS,
   TAccountCharge extends string | AccountMeta<string> = string,
   TAccountSub extends string | AccountMeta<string> = string,
+  TAccountVault extends string | AccountMeta<string> = string,
+  TAccountBondSource extends string | AccountMeta<string> = string,
   TAccountSubscriber extends string | AccountMeta<string> = string,
+  TAccountMint extends string | AccountMeta<string> = string,
+  TAccountTokenProgram extends string | AccountMeta<string> =
+    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
   TRemainingAccounts extends readonly AccountMeta<string>[] = [],
 > = Instruction<TProgram> &
   InstructionWithData<ReadonlyUint8Array> &
@@ -64,10 +72,22 @@ export type DisputeChargeInstruction<
         ? WritableAccount<TAccountCharge>
         : TAccountCharge,
       TAccountSub extends string ? WritableAccount<TAccountSub> : TAccountSub,
+      TAccountVault extends string
+        ? WritableAccount<TAccountVault>
+        : TAccountVault,
+      TAccountBondSource extends string
+        ? WritableAccount<TAccountBondSource>
+        : TAccountBondSource,
       TAccountSubscriber extends string
         ? WritableSignerAccount<TAccountSubscriber> &
             AccountSignerMeta<TAccountSubscriber>
         : TAccountSubscriber,
+      TAccountMint extends string
+        ? ReadonlyAccount<TAccountMint>
+        : TAccountMint,
+      TAccountTokenProgram extends string
+        ? ReadonlyAccount<TAccountTokenProgram>
+        : TAccountTokenProgram,
       ...TRemainingAccounts,
     ]
   >;
@@ -108,38 +128,78 @@ export function getDisputeChargeInstructionDataCodec(): FixedSizeCodec<
   );
 }
 
-export type DisputeChargeInput<
+export type DisputeChargeAsyncInput<
   TAccountCharge extends InstructionAccountInput = InstructionAccountInput,
   TAccountSub extends InstructionAccountInput = InstructionAccountInput,
+  TAccountVault extends InstructionAccountInput = InstructionAccountInput,
+  TAccountBondSource extends InstructionAccountInput = InstructionAccountInput,
   TAccountSubscriber extends InstructionSignerInput = InstructionSignerInput,
+  TAccountMint extends InstructionAccountInput = InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput =
+    InstructionAccountInput,
 > = {
   charge: TAccountCharge;
   sub: TAccountSub;
+  vault?: TAccountVault;
+  /** Any token account the subscriber can spend from; the bond comes from here. */
+  bondSource: TAccountBondSource;
   subscriber: TAccountSubscriber;
+  mint: TAccountMint;
+  tokenProgram?: TAccountTokenProgram;
   evidenceRef: DisputeChargeInstructionDataArgs["evidenceRef"];
 };
 
-export function getDisputeChargeInstruction<
+export async function getDisputeChargeInstructionAsync<
   TAccountCharge extends InstructionAccountInput,
   TAccountSub extends InstructionAccountInput,
+  TAccountVault extends InstructionAccountInput,
+  TAccountBondSource extends InstructionAccountInput,
   TAccountSubscriber extends InstructionSignerInput,
+  TAccountMint extends InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput,
   TProgramAddress extends Address = typeof RECORA_PROGRAM_ADDRESS,
 >(
-  input: DisputeChargeInput<TAccountCharge, TAccountSub, TAccountSubscriber>,
-  config?: { programAddress?: TProgramAddress },
-): DisputeChargeInstruction<
-  TProgramAddress,
-  ResolvedInstructionAccountMeta<
+  input: DisputeChargeAsyncInput<
     TAccountCharge,
-    InstructionAccountInputAddress<TAccountCharge>
-  >,
-  ResolvedInstructionAccountMeta<
     TAccountSub,
-    InstructionAccountInputAddress<TAccountSub>
-  >,
-  ResolvedInstructionAccountMeta<
+    TAccountVault,
+    TAccountBondSource,
     TAccountSubscriber,
-    InstructionAccountInputAddress<TAccountSubscriber>
+    TAccountMint,
+    TAccountTokenProgram
+  >,
+  config?: { programAddress?: TProgramAddress },
+): Promise<
+  DisputeChargeInstruction<
+    TProgramAddress,
+    ResolvedInstructionAccountMeta<
+      TAccountCharge,
+      InstructionAccountInputAddress<TAccountCharge>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountSub,
+      InstructionAccountInputAddress<TAccountSub>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountVault,
+      InstructionAccountInputAddress<TAccountVault>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountBondSource,
+      InstructionAccountInputAddress<TAccountBondSource>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountSubscriber,
+      InstructionAccountInputAddress<TAccountSubscriber>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountMint,
+      InstructionAccountInputAddress<TAccountMint>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountTokenProgram,
+      InstructionAccountInputAddress<TAccountTokenProgram>
+    >
   >
 > {
   // Program address.
@@ -152,10 +212,22 @@ export function getDisputeChargeInstruction<
   const originalAccounts = {
     charge: { value: input.charge ?? null, isSigner: false, isWritable: true },
     sub: { value: input.sub ?? null, isSigner: false, isWritable: true },
+    vault: { value: input.vault ?? null, isSigner: false, isWritable: true },
+    bondSource: {
+      value: input.bondSource ?? null,
+      isSigner: false,
+      isWritable: true,
+    },
     subscriber: {
       value: input.subscriber ?? null,
       isSigner: true,
       isWritable: true,
+    },
+    mint: { value: input.mint ?? null, isSigner: false, isWritable: false },
+    tokenProgram: {
+      value: input.tokenProgram ?? null,
+      isSigner: false,
+      isWritable: false,
     },
   };
   const accounts = originalAccounts as Record<
@@ -166,11 +238,32 @@ export function getDisputeChargeInstruction<
   // Original args.
   const args = { ...input };
 
+  // Resolve default values.
+  if (!accounts.vault.value) {
+    accounts.vault.value = await findVaultPda(
+      {
+        sub: getAddressFromResolvedInstructionAccount(
+          "sub",
+          accounts.sub.value,
+        ),
+      },
+      { programAddress },
+    );
+  }
+  if (!accounts.tokenProgram.value) {
+    accounts.tokenProgram.value =
+      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" as Address<"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA">;
+  }
+
   return Object.freeze({
     accounts: [
       getAccountMeta("charge", accounts.charge),
       getAccountMeta("sub", accounts.sub),
+      getAccountMeta("vault", accounts.vault),
+      getAccountMeta("bondSource", accounts.bondSource),
       getAccountMeta("subscriber", accounts.subscriber),
+      getAccountMeta("mint", accounts.mint),
+      getAccountMeta("tokenProgram", accounts.tokenProgram),
     ],
     data: getDisputeChargeInstructionDataEncoder().encode(
       args as DisputeChargeInstructionDataArgs,
@@ -187,8 +280,185 @@ export function getDisputeChargeInstruction<
       InstructionAccountInputAddress<TAccountSub>
     >,
     ResolvedInstructionAccountMeta<
+      TAccountVault,
+      InstructionAccountInputAddress<TAccountVault>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountBondSource,
+      InstructionAccountInputAddress<TAccountBondSource>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountSubscriber,
       InstructionAccountInputAddress<TAccountSubscriber>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountMint,
+      InstructionAccountInputAddress<TAccountMint>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountTokenProgram,
+      InstructionAccountInputAddress<TAccountTokenProgram>
+    >
+  >);
+}
+
+export type DisputeChargeInput<
+  TAccountCharge extends InstructionAccountInput = InstructionAccountInput,
+  TAccountSub extends InstructionAccountInput = InstructionAccountInput,
+  TAccountVault extends InstructionAccountInput = InstructionAccountInput,
+  TAccountBondSource extends InstructionAccountInput = InstructionAccountInput,
+  TAccountSubscriber extends InstructionSignerInput = InstructionSignerInput,
+  TAccountMint extends InstructionAccountInput = InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput =
+    InstructionAccountInput,
+> = {
+  charge: TAccountCharge;
+  sub: TAccountSub;
+  vault: TAccountVault;
+  /** Any token account the subscriber can spend from; the bond comes from here. */
+  bondSource: TAccountBondSource;
+  subscriber: TAccountSubscriber;
+  mint: TAccountMint;
+  tokenProgram?: TAccountTokenProgram;
+  evidenceRef: DisputeChargeInstructionDataArgs["evidenceRef"];
+};
+
+export function getDisputeChargeInstruction<
+  TAccountCharge extends InstructionAccountInput,
+  TAccountSub extends InstructionAccountInput,
+  TAccountVault extends InstructionAccountInput,
+  TAccountBondSource extends InstructionAccountInput,
+  TAccountSubscriber extends InstructionSignerInput,
+  TAccountMint extends InstructionAccountInput,
+  TAccountTokenProgram extends InstructionAccountInput,
+  TProgramAddress extends Address = typeof RECORA_PROGRAM_ADDRESS,
+>(
+  input: DisputeChargeInput<
+    TAccountCharge,
+    TAccountSub,
+    TAccountVault,
+    TAccountBondSource,
+    TAccountSubscriber,
+    TAccountMint,
+    TAccountTokenProgram
+  >,
+  config?: { programAddress?: TProgramAddress },
+): DisputeChargeInstruction<
+  TProgramAddress,
+  ResolvedInstructionAccountMeta<
+    TAccountCharge,
+    InstructionAccountInputAddress<TAccountCharge>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountSub,
+    InstructionAccountInputAddress<TAccountSub>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountVault,
+    InstructionAccountInputAddress<TAccountVault>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountBondSource,
+    InstructionAccountInputAddress<TAccountBondSource>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountSubscriber,
+    InstructionAccountInputAddress<TAccountSubscriber>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountMint,
+    InstructionAccountInputAddress<TAccountMint>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountTokenProgram,
+    InstructionAccountInputAddress<TAccountTokenProgram>
+  >
+> {
+  // Program address.
+  const programAddress = config?.programAddress ?? RECORA_PROGRAM_ADDRESS;
+
+  // Account meta helper.
+  const getAccountMeta = getAccountMetaFactory(programAddress, "programId");
+
+  // Original accounts.
+  const originalAccounts = {
+    charge: { value: input.charge ?? null, isSigner: false, isWritable: true },
+    sub: { value: input.sub ?? null, isSigner: false, isWritable: true },
+    vault: { value: input.vault ?? null, isSigner: false, isWritable: true },
+    bondSource: {
+      value: input.bondSource ?? null,
+      isSigner: false,
+      isWritable: true,
+    },
+    subscriber: {
+      value: input.subscriber ?? null,
+      isSigner: true,
+      isWritable: true,
+    },
+    mint: { value: input.mint ?? null, isSigner: false, isWritable: false },
+    tokenProgram: {
+      value: input.tokenProgram ?? null,
+      isSigner: false,
+      isWritable: false,
+    },
+  };
+  const accounts = originalAccounts as Record<
+    keyof typeof originalAccounts,
+    ResolvedInstructionAccount
+  >;
+
+  // Original args.
+  const args = { ...input };
+
+  // Resolve default values.
+  if (!accounts.tokenProgram.value) {
+    accounts.tokenProgram.value =
+      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" as Address<"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA">;
+  }
+
+  return Object.freeze({
+    accounts: [
+      getAccountMeta("charge", accounts.charge),
+      getAccountMeta("sub", accounts.sub),
+      getAccountMeta("vault", accounts.vault),
+      getAccountMeta("bondSource", accounts.bondSource),
+      getAccountMeta("subscriber", accounts.subscriber),
+      getAccountMeta("mint", accounts.mint),
+      getAccountMeta("tokenProgram", accounts.tokenProgram),
+    ],
+    data: getDisputeChargeInstructionDataEncoder().encode(
+      args as DisputeChargeInstructionDataArgs,
+    ),
+    programAddress,
+  } as DisputeChargeInstruction<
+    TProgramAddress,
+    ResolvedInstructionAccountMeta<
+      TAccountCharge,
+      InstructionAccountInputAddress<TAccountCharge>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountSub,
+      InstructionAccountInputAddress<TAccountSub>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountVault,
+      InstructionAccountInputAddress<TAccountVault>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountBondSource,
+      InstructionAccountInputAddress<TAccountBondSource>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountSubscriber,
+      InstructionAccountInputAddress<TAccountSubscriber>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountMint,
+      InstructionAccountInputAddress<TAccountMint>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountTokenProgram,
+      InstructionAccountInputAddress<TAccountTokenProgram>
     >
   >);
 }
@@ -201,7 +471,12 @@ export type ParsedDisputeChargeInstruction<
   accounts: {
     charge: TAccountMetas[0];
     sub: TAccountMetas[1];
-    subscriber: TAccountMetas[2];
+    vault: TAccountMetas[2];
+    /** Any token account the subscriber can spend from; the bond comes from here. */
+    bondSource: TAccountMetas[3];
+    subscriber: TAccountMetas[4];
+    mint: TAccountMetas[5];
+    tokenProgram: TAccountMetas[6];
   };
   data: DisputeChargeInstructionData;
 };
@@ -214,12 +489,12 @@ export function parseDisputeChargeInstruction<
     InstructionWithAccounts<TAccountMetas> &
     InstructionWithData<ReadonlyUint8Array>,
 ): ParsedDisputeChargeInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 3) {
+  if (instruction.accounts.length < 7) {
     throw new SolanaError(
       SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS,
       {
         actualAccountMetas: instruction.accounts.length,
-        expectedAccountMetas: 3,
+        expectedAccountMetas: 7,
       },
     );
   }
@@ -234,7 +509,11 @@ export function parseDisputeChargeInstruction<
     accounts: {
       charge: getNextAccount(),
       sub: getNextAccount(),
+      vault: getNextAccount(),
+      bondSource: getNextAccount(),
       subscriber: getNextAccount(),
+      mint: getNextAccount(),
+      tokenProgram: getNextAccount(),
     },
     data: getDisputeChargeInstructionDataDecoder().decode(instruction.data),
   };

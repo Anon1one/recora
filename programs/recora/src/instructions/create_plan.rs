@@ -9,7 +9,7 @@ pub struct CreatePlan<'info> {
     #[account(
         init,
         payer = merchant_authority,
-        space = 8 + 32 + 8 + 32 + 8 + 8 + 8 + 32 + 2 + 8 + 1,
+        space = 8 + 32 + 8 + 32 + 8 + 8 + 8 + 32 + 2 + 8 + 1 + 2 + 8,
         seeds = [SEED_PLAN, merchant_authority.key().as_ref(), merchant.plan_count.to_le_bytes().as_ref()],
         bump
     )]
@@ -77,9 +77,17 @@ pub fn create_plan_handler(
     plan.resolver_fee_bps = resolver_fee_bps;
     plan.subs_count = 0;
     plan.bump = ctx.bumps.plan;
+    plan.fee_bps = ctx.accounts.config.fee_bps;
+    plan.dispute_secs = ctx.accounts.config.dispute_secs;
 
     ctx.accounts.merchant.plan_count = ctx.accounts.merchant.plan_count.checked_add(1).ok_or(RecoraError::MathOverflow)?;
 
-    emit!(PlanCreated { plan: plan.key(), plan_id });
+    emit!(PlanCreated {
+        plan: plan.key(),
+        merchant: plan.merchant,
+        plan_id,
+        fee_bps: plan.fee_bps,
+        dispute_secs: plan.dispute_secs,
+    });
     Ok(())
 }

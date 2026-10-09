@@ -9,6 +9,7 @@
 export * from "./acceptAuthority";
 export * from "./cancelSubscription";
 export * from "./closeSubscription";
+export * from "./contestDispute";
 export * from "./createPlan";
 export * from "./disputeCharge";
 export * from "./initializeConfig";

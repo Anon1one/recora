@@ -178,6 +178,7 @@ export type ResolveDisputeAsyncInput<
   charge: TAccountCharge;
   sub: TAccountSub;
   vault?: TAccountVault;
+  /** subscriber can hand the ATA to another key. */
   subscriberAta: TAccountSubscriberAta;
   merchant?: TAccountMerchant;
   merchantAta: TAccountMerchantAta;
@@ -489,6 +490,7 @@ export type ResolveDisputeInput<
   charge: TAccountCharge;
   sub: TAccountSub;
   vault: TAccountVault;
+  /** subscriber can hand the ATA to another key. */
   subscriberAta: TAccountSubscriberAta;
   merchant: TAccountMerchant;
   merchantAta: TAccountMerchantAta;
@@ -760,6 +762,7 @@ export type ParsedResolveDisputeInstruction<
     charge: TAccountMetas[0];
     sub: TAccountMetas[1];
     vault: TAccountMetas[2];
+    /** subscriber can hand the ATA to another key. */
     subscriberAta: TAccountMetas[3];
     merchant: TAccountMetas[4];
     merchantAta: TAccountMetas[5];

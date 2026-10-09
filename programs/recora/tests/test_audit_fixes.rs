@@ -305,6 +305,7 @@ fn refund_ix(w: &World, merchant_auth: &Pubkey, merchant: &Pubkey) -> Ix {
             sub: w.sub,
             vault: w.vault,
             subscriber_ata: w.sub_ata,
+            merchant_ata: w.merchant_payout,
             rent_payer: w.keeper.pubkey(),
             merchant: *merchant,
             merchant_authority: *merchant_auth,
@@ -313,6 +314,31 @@ fn refund_ix(w: &World, merchant_auth: &Pubkey, merchant: &Pubkey) -> Ix {
         },
         recora::instruction::RefundCharge {},
     )
+}
+
+/// Charge 0 disputed by the subscriber and contested by the merchant, each
+/// posting the 2% bond, so the resolver can rule.
+fn dispute_and_contest(w: &mut World) {
+    let s = w.subscriber.insecure_clone();
+    let d = ix(
+        recora::accounts::DisputeCharge {
+            charge: charge0(w), sub: w.sub, vault: w.vault, bond_source: w.sub_ata, subscriber: s.pubkey(),
+            mint: w.mint, token_program: anchor_spl::token::ID,
+        },
+        recora::instruction::DisputeCharge { evidence_ref: [7; 32] },
+    );
+    send(&mut w.svm, &[d], &[&s]).unwrap();
+    let bond = PRICE * 200 / 10_000;
+    let (mint, m) = (w.mint, w.merchant_auth.insecure_clone());
+    w.svm.set_account(w.merchant_payout, mock_ta(&mint, &m.pubkey(), bond)).unwrap();
+    let c = ix(
+        recora::accounts::ContestDispute {
+            charge: charge0(w), sub: w.sub, vault: w.vault, merchant: w.merchant, merchant_authority: m.pubkey(),
+            bond_source: w.merchant_payout, mint: w.mint, token_program: anchor_spl::token::ID,
+        },
+        recora::instruction::ContestDispute {},
+    );
+    send(&mut w.svm, &[c], &[&m]).unwrap();
 }
 
 /// F-1: settling into someone else's Merchant PDA is rejected; settling
@@ -342,12 +368,7 @@ fn settle_pays_only_the_plans_merchant() {
 #[test]
 fn resolve_pays_only_the_plans_merchant() {
     let mut w = billed();
-    let s = w.subscriber.insecure_clone();
-    let d = ix(
-        recora::accounts::DisputeCharge { charge: charge0(&w), sub: w.sub, subscriber: s.pubkey() },
-        recora::instruction::DisputeCharge { evidence_ref: [7; 32] },
-    );
-    send(&mut w.svm, &[d], &[&s]).unwrap();
+    dispute_and_contest(&mut w);
 
     let resolver = w.resolver.insecure_clone();
     let mint = w.mint;
@@ -555,12 +576,7 @@ fn merchant_payout_must_be_canonical() {
 #[test]
 fn resolver_fee_goes_to_resolver_ata() {
     let mut w = billed();
-    let s = w.subscriber.insecure_clone();
-    let d = ix(
-        recora::accounts::DisputeCharge { charge: charge0(&w), sub: w.sub, subscriber: s.pubkey() },
-        recora::instruction::DisputeCharge { evidence_ref: [7; 32] },
-    );
-    send(&mut w.svm, &[d], &[&s]).unwrap();
+    dispute_and_contest(&mut w);
 
     let resolver = w.resolver.insecure_clone();
     let mint = w.mint;

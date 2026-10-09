@@ -101,6 +101,10 @@ pub mod recora {
         dispute_charge_handler(ctx, evidence_ref)
     }
 
+    pub fn contest_dispute(ctx: Context<ContestDispute>) -> Result<()> {
+        contest_dispute_handler(ctx)
+    }
+
     pub fn settle_charge(ctx: Context<SettleCharge>) -> Result<()> {
         settle_charge_handler(ctx)
     }

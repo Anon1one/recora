@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "anchor build",
+    "build": "anchor build --arch v0",
     "codegen": "codama run client",
-    "test": "anchor test",
+    "test": "cd programs/recora && cargo test --locked",
     "keeper": "ts-node scripts/keeper.ts",
     "test:ts": "ts-mocha -p ./tsconfig.json -t 1000000 'tests/**/*.spec.ts'",
+    "test:keeper": "ts-node tests/keeper.smoke.ts",
     "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {

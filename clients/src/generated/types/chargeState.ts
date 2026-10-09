@@ -21,6 +21,7 @@ export enum ChargeState {
   Settled,
   Refunded,
   Resolved,
+  Contested,
 }
 
 export type ChargeStateArgs = ChargeState;

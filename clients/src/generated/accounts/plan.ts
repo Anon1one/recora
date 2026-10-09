@@ -61,6 +61,8 @@ export type Plan = {
   resolverFeeBps: number;
   subsCount: bigint;
   bump: number;
+  feeBps: number;
+  disputeSecs: bigint;
 };
 
 export type PlanArgs = {
@@ -74,6 +76,8 @@ export type PlanArgs = {
   resolverFeeBps: number;
   subsCount: number | bigint;
   bump: number;
+  feeBps: number;
+  disputeSecs: number | bigint;
 };
 
 /** Gets the encoder for {@link PlanArgs} account data. */
@@ -91,6 +95,8 @@ export function getPlanEncoder(): FixedSizeEncoder<PlanArgs> {
       ["resolverFeeBps", getU16Encoder()],
       ["subsCount", getU64Encoder()],
       ["bump", getU8Encoder()],
+      ["feeBps", getU16Encoder()],
+      ["disputeSecs", getU64Encoder()],
     ]),
     (value) => ({ ...value, discriminator: PLAN_DISCRIMINATOR }),
   );
@@ -110,6 +116,8 @@ export function getPlanDecoder(): FixedSizeDecoder<Plan> {
     ["resolverFeeBps", getU16Decoder()],
     ["subsCount", getU64Decoder()],
     ["bump", getU8Decoder()],
+    ["feeBps", getU16Decoder()],
+    ["disputeSecs", getU64Decoder()],
   ]);
 }
 
@@ -172,5 +180,5 @@ export async function fetchAllMaybePlan(
 }
 
 export function getPlanSize(): number {
-  return 147;
+  return 157;
 }

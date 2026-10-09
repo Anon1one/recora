@@ -159,6 +159,10 @@ export type ProcessBillingAsyncInput<
   plan: TAccountPlan;
   charge: TAccountCharge;
   vault?: TAccountVault;
+  /**
+   * lapses the subscription instead of making the crank revert; no owner
+   * check either, since an owner change clears the delegate and also lapses.
+   */
   subscriberAta: TAccountSubscriberAta;
   delegate?: TAccountDelegate;
   caller: TAccountCaller;
@@ -400,6 +404,10 @@ export type ProcessBillingInput<
   plan: TAccountPlan;
   charge: TAccountCharge;
   vault: TAccountVault;
+  /**
+   * lapses the subscription instead of making the crank revert; no owner
+   * check either, since an owner change clears the delegate and also lapses.
+   */
   subscriberAta: TAccountSubscriberAta;
   delegate: TAccountDelegate;
   caller: TAccountCaller;
@@ -614,6 +622,10 @@ export type ParsedProcessBillingInstruction<
     plan: TAccountMetas[1];
     charge: TAccountMetas[2];
     vault: TAccountMetas[3];
+    /**
+     * lapses the subscription instead of making the crank revert; no owner
+     * check either, since an owner change clears the delegate and also lapses.
+     */
     subscriberAta: TAccountMetas[4];
     delegate: TAccountMetas[5];
     caller: TAccountMetas[6];

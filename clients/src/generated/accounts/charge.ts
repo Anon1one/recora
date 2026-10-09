@@ -66,6 +66,9 @@ export type Charge = {
   evidenceRef: ReadonlyUint8Array;
   rentPayer: Address;
   bump: number;
+  subscriberBond: bigint;
+  merchantBond: bigint;
+  contestedAt: bigint;
 };
 
 export type ChargeArgs = {
@@ -78,6 +81,9 @@ export type ChargeArgs = {
   evidenceRef: ReadonlyUint8Array;
   rentPayer: Address;
   bump: number;
+  subscriberBond: number | bigint;
+  merchantBond: number | bigint;
+  contestedAt: number | bigint;
 };
 
 /** Gets the encoder for {@link ChargeArgs} account data. */
@@ -94,6 +100,9 @@ export function getChargeEncoder(): FixedSizeEncoder<ChargeArgs> {
       ["evidenceRef", fixEncoderSize(getBytesEncoder(), 32)],
       ["rentPayer", getAddressEncoder()],
       ["bump", getU8Encoder()],
+      ["subscriberBond", getU64Encoder()],
+      ["merchantBond", getU64Encoder()],
+      ["contestedAt", getI64Encoder()],
     ]),
     (value) => ({ ...value, discriminator: CHARGE_DISCRIMINATOR }),
   );
@@ -112,6 +121,9 @@ export function getChargeDecoder(): FixedSizeDecoder<Charge> {
     ["evidenceRef", fixDecoderSize(getBytesDecoder(), 32)],
     ["rentPayer", getAddressDecoder()],
     ["bump", getU8Decoder()],
+    ["subscriberBond", getU64Decoder()],
+    ["merchantBond", getU64Decoder()],
+    ["contestedAt", getI64Decoder()],
   ]);
 }
 
@@ -174,5 +186,5 @@ export async function fetchAllMaybeCharge(
 }
 
 export function getChargeSize(): number {
-  return 138;
+  return 162;
 }

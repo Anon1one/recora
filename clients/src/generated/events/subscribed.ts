@@ -19,6 +19,8 @@ import {
   getHiddenPrefixEncoder,
   getStructDecoder,
   getStructEncoder,
+  getU64Decoder,
+  getU64Encoder,
   type Address,
   type FixedSizeCodec,
   type FixedSizeDecoder,
@@ -35,14 +37,29 @@ export function getSubscribedEventDiscriminatorBytes(): ReadonlyUint8Array {
   );
 }
 
-export type SubscribedEvent = { subscription: Address };
+export type SubscribedEvent = {
+  subscription: Address;
+  plan: Address;
+  subscriber: Address;
+  nCycles: bigint;
+};
 
-export type SubscribedEventArgs = SubscribedEvent;
+export type SubscribedEventArgs = {
+  subscription: Address;
+  plan: Address;
+  subscriber: Address;
+  nCycles: number | bigint;
+};
 
 /** Gets the encoder for {@link SubscribedEventArgs} event data. */
 export function getSubscribedEventEncoder(): FixedSizeEncoder<SubscribedEventArgs> {
   return getHiddenPrefixEncoder(
-    getStructEncoder([["subscription", getAddressEncoder()]]),
+    getStructEncoder([
+      ["subscription", getAddressEncoder()],
+      ["plan", getAddressEncoder()],
+      ["subscriber", getAddressEncoder()],
+      ["nCycles", getU64Encoder()],
+    ]),
     [getConstantEncoder(SUBSCRIBED_EVENT_DISCRIMINATOR)],
   );
 }
@@ -50,7 +67,12 @@ export function getSubscribedEventEncoder(): FixedSizeEncoder<SubscribedEventArg
 /** Gets the decoder for {@link SubscribedEvent} event data. */
 export function getSubscribedEventDecoder(): FixedSizeDecoder<SubscribedEvent> {
   return getHiddenPrefixDecoder(
-    getStructDecoder([["subscription", getAddressDecoder()]]),
+    getStructDecoder([
+      ["subscription", getAddressDecoder()],
+      ["plan", getAddressDecoder()],
+      ["subscriber", getAddressDecoder()],
+      ["nCycles", getU64Decoder()],
+    ]),
     [getConstantDecoder(SUBSCRIBED_EVENT_DISCRIMINATOR)],
   );
 }

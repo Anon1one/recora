@@ -62,6 +62,7 @@ export type RefundChargeInstruction<
   TAccountRentPayer extends string | AccountMeta<string> = string,
   TAccountMerchant extends string | AccountMeta<string> = string,
   TAccountMerchantAuthority extends string | AccountMeta<string> = string,
+  TAccountMerchantAta extends string | AccountMeta<string> = string,
   TAccountMint extends string | AccountMeta<string> = string,
   TAccountTokenProgram extends string | AccountMeta<string> =
     "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
@@ -90,6 +91,9 @@ export type RefundChargeInstruction<
         ? WritableSignerAccount<TAccountMerchantAuthority> &
             AccountSignerMeta<TAccountMerchantAuthority>
         : TAccountMerchantAuthority,
+      TAccountMerchantAta extends string
+        ? WritableAccount<TAccountMerchantAta>
+        : TAccountMerchantAta,
       TAccountMint extends string
         ? ReadonlyAccount<TAccountMint>
         : TAccountMint,
@@ -137,6 +141,7 @@ export type RefundChargeAsyncInput<
   TAccountMerchant extends InstructionAccountInput = InstructionAccountInput,
   TAccountMerchantAuthority extends InstructionSignerInput =
     InstructionSignerInput,
+  TAccountMerchantAta extends InstructionAccountInput = InstructionAccountInput,
   TAccountMint extends InstructionAccountInput = InstructionAccountInput,
   TAccountTokenProgram extends InstructionAccountInput =
     InstructionAccountInput,
@@ -144,10 +149,12 @@ export type RefundChargeAsyncInput<
   charge: TAccountCharge;
   sub: TAccountSub;
   vault?: TAccountVault;
+  /** No owner check: on classic SPL the subscriber can hand the ATA to another key. */
   subscriberAta: TAccountSubscriberAta;
   rentPayer: TAccountRentPayer;
   merchant?: TAccountMerchant;
   merchantAuthority: TAccountMerchantAuthority;
+  merchantAta: TAccountMerchantAta;
   mint: TAccountMint;
   tokenProgram?: TAccountTokenProgram;
 };
@@ -160,6 +167,7 @@ export async function getRefundChargeInstructionAsync<
   TAccountRentPayer extends InstructionAccountInput,
   TAccountMerchant extends InstructionAccountInput,
   TAccountMerchantAuthority extends InstructionSignerInput,
+  TAccountMerchantAta extends InstructionAccountInput,
   TAccountMint extends InstructionAccountInput,
   TAccountTokenProgram extends InstructionAccountInput,
   TProgramAddress extends Address = typeof RECORA_PROGRAM_ADDRESS,
@@ -172,6 +180,7 @@ export async function getRefundChargeInstructionAsync<
     TAccountRentPayer,
     TAccountMerchant,
     TAccountMerchantAuthority,
+    TAccountMerchantAta,
     TAccountMint,
     TAccountTokenProgram
   >,
@@ -206,6 +215,10 @@ export async function getRefundChargeInstructionAsync<
     ResolvedInstructionAccountMeta<
       TAccountMerchantAuthority,
       InstructionAccountInputAddress<TAccountMerchantAuthority>
+    >,
+    ResolvedInstructionAccountMeta<
+      TAccountMerchantAta,
+      InstructionAccountInputAddress<TAccountMerchantAta>
     >,
     ResolvedInstructionAccountMeta<
       TAccountMint,
@@ -246,6 +259,11 @@ export async function getRefundChargeInstructionAsync<
     merchantAuthority: {
       value: input.merchantAuthority ?? null,
       isSigner: true,
+      isWritable: true,
+    },
+    merchantAta: {
+      value: input.merchantAta ?? null,
+      isSigner: false,
       isWritable: true,
     },
     mint: { value: input.mint ?? null, isSigner: false, isWritable: false },
@@ -297,6 +315,7 @@ export async function getRefundChargeInstructionAsync<
       getAccountMeta("rentPayer", accounts.rentPayer),
       getAccountMeta("merchant", accounts.merchant),
       getAccountMeta("merchantAuthority", accounts.merchantAuthority),
+      getAccountMeta("merchantAta", accounts.merchantAta),
       getAccountMeta("mint", accounts.mint),
       getAccountMeta("tokenProgram", accounts.tokenProgram),
     ],
@@ -333,6 +352,10 @@ export async function getRefundChargeInstructionAsync<
       InstructionAccountInputAddress<TAccountMerchantAuthority>
     >,
     ResolvedInstructionAccountMeta<
+      TAccountMerchantAta,
+      InstructionAccountInputAddress<TAccountMerchantAta>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountMint,
       InstructionAccountInputAddress<TAccountMint>
     >,
@@ -353,6 +376,7 @@ export type RefundChargeInput<
   TAccountMerchant extends InstructionAccountInput = InstructionAccountInput,
   TAccountMerchantAuthority extends InstructionSignerInput =
     InstructionSignerInput,
+  TAccountMerchantAta extends InstructionAccountInput = InstructionAccountInput,
   TAccountMint extends InstructionAccountInput = InstructionAccountInput,
   TAccountTokenProgram extends InstructionAccountInput =
     InstructionAccountInput,
@@ -360,10 +384,12 @@ export type RefundChargeInput<
   charge: TAccountCharge;
   sub: TAccountSub;
   vault: TAccountVault;
+  /** No owner check: on classic SPL the subscriber can hand the ATA to another key. */
   subscriberAta: TAccountSubscriberAta;
   rentPayer: TAccountRentPayer;
   merchant: TAccountMerchant;
   merchantAuthority: TAccountMerchantAuthority;
+  merchantAta: TAccountMerchantAta;
   mint: TAccountMint;
   tokenProgram?: TAccountTokenProgram;
 };
@@ -376,6 +402,7 @@ export function getRefundChargeInstruction<
   TAccountRentPayer extends InstructionAccountInput,
   TAccountMerchant extends InstructionAccountInput,
   TAccountMerchantAuthority extends InstructionSignerInput,
+  TAccountMerchantAta extends InstructionAccountInput,
   TAccountMint extends InstructionAccountInput,
   TAccountTokenProgram extends InstructionAccountInput,
   TProgramAddress extends Address = typeof RECORA_PROGRAM_ADDRESS,
@@ -388,6 +415,7 @@ export function getRefundChargeInstruction<
     TAccountRentPayer,
     TAccountMerchant,
     TAccountMerchantAuthority,
+    TAccountMerchantAta,
     TAccountMint,
     TAccountTokenProgram
   >,
@@ -421,6 +449,10 @@ export function getRefundChargeInstruction<
   ResolvedInstructionAccountMeta<
     TAccountMerchantAuthority,
     InstructionAccountInputAddress<TAccountMerchantAuthority>
+  >,
+  ResolvedInstructionAccountMeta<
+    TAccountMerchantAta,
+    InstructionAccountInputAddress<TAccountMerchantAta>
   >,
   ResolvedInstructionAccountMeta<
     TAccountMint,
@@ -462,6 +494,11 @@ export function getRefundChargeInstruction<
       isSigner: true,
       isWritable: true,
     },
+    merchantAta: {
+      value: input.merchantAta ?? null,
+      isSigner: false,
+      isWritable: true,
+    },
     mint: { value: input.mint ?? null, isSigner: false, isWritable: false },
     tokenProgram: {
       value: input.tokenProgram ?? null,
@@ -489,6 +526,7 @@ export function getRefundChargeInstruction<
       getAccountMeta("rentPayer", accounts.rentPayer),
       getAccountMeta("merchant", accounts.merchant),
       getAccountMeta("merchantAuthority", accounts.merchantAuthority),
+      getAccountMeta("merchantAta", accounts.merchantAta),
       getAccountMeta("mint", accounts.mint),
       getAccountMeta("tokenProgram", accounts.tokenProgram),
     ],
@@ -525,6 +563,10 @@ export function getRefundChargeInstruction<
       InstructionAccountInputAddress<TAccountMerchantAuthority>
     >,
     ResolvedInstructionAccountMeta<
+      TAccountMerchantAta,
+      InstructionAccountInputAddress<TAccountMerchantAta>
+    >,
+    ResolvedInstructionAccountMeta<
       TAccountMint,
       InstructionAccountInputAddress<TAccountMint>
     >,
@@ -544,12 +586,14 @@ export type ParsedRefundChargeInstruction<
     charge: TAccountMetas[0];
     sub: TAccountMetas[1];
     vault: TAccountMetas[2];
+    /** No owner check: on classic SPL the subscriber can hand the ATA to another key. */
     subscriberAta: TAccountMetas[3];
     rentPayer: TAccountMetas[4];
     merchant: TAccountMetas[5];
     merchantAuthority: TAccountMetas[6];
-    mint: TAccountMetas[7];
-    tokenProgram: TAccountMetas[8];
+    merchantAta: TAccountMetas[7];
+    mint: TAccountMetas[8];
+    tokenProgram: TAccountMetas[9];
   };
   data: RefundChargeInstructionData;
 };
@@ -562,12 +606,12 @@ export function parseRefundChargeInstruction<
     InstructionWithAccounts<TAccountMetas> &
     InstructionWithData<ReadonlyUint8Array>,
 ): ParsedRefundChargeInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 9) {
+  if (instruction.accounts.length < 10) {
     throw new SolanaError(
       SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS,
       {
         actualAccountMetas: instruction.accounts.length,
-        expectedAccountMetas: 9,
+        expectedAccountMetas: 10,
       },
     );
   }
@@ -587,6 +631,7 @@ export function parseRefundChargeInstruction<
       rentPayer: getNextAccount(),
       merchant: getNextAccount(),
       merchantAuthority: getNextAccount(),
+      merchantAta: getNextAccount(),
       mint: getNextAccount(),
       tokenProgram: getNextAccount(),
     },

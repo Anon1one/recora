@@ -12,6 +12,7 @@ export * from "./chargeRefunded";
 export * from "./chargeRefundedAfterTimeout";
 export * from "./chargeSettled";
 export * from "./configUpdated";
+export * from "./disputeContested";
 export * from "./disputeResolved";
 export * from "./feesWithdrawn";
 export * from "./merchantInitialized";
