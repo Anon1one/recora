@@ -191,7 +191,10 @@ export function Console({ view }: { view: string }) {
       setLoading(true);
       setError(null);
       try {
-        const [profile, status] = await Promise.all([api("me"), api("health")]);
+        const [profile, status] = await Promise.all([
+          api("me"),
+          network?.config?.authority === wallet ? api("health").catch(() => null) : Promise.resolve(null),
+        ]);
         setMe(profile);
         setHealth(status);
         const merchant = profile.merchant?.address;
@@ -233,7 +236,7 @@ export function Console({ view }: { view: string }) {
         setLoading(false);
       }
     },
-    [wallet, view, state],
+    [wallet, view, state, network?.config?.authority],
   );
   useEffect(() => {
     void refresh();
@@ -717,7 +720,7 @@ export function Console({ view }: { view: string }) {
               />
               {health
                 ? health.errors.length
-                  ? `${health.errors.length} indexing issues · recovery queued`
+                  ? `${health.errors.length} indexing issues · review needed`
                   : queuePending
                     ? `${queuePending} transactions awaiting indexing`
                     : !health.checkpoint
@@ -725,7 +728,7 @@ export function Console({ view }: { view: string }) {
                       : !health.checkpoint.data.complete
                         ? "History backfill in progress"
                         : "Ledger synchronized"
-                : "Connect to check ledger freshness"}
+                : wallet ? "Operational status available to protocol administrators" : "Connect your wallet to view your records"}
               {health?.checkpoint?.updated_at && (
                 <small>
                   {" "}

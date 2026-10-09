@@ -183,6 +183,17 @@ test("merchant overview and plan form work without layout overflow", async ({
     fullPage: true,
   });
 });
+test("merchant login succeeds when operational health is forbidden", async ({ page }) => {
+  await fixture(page, "merchant");
+  await page.route("**/api/health", (route) => route.fulfill({
+    status: 403, json: { error: "Protocol authority required" },
+  }));
+  await page.goto("/");
+  await connect(page);
+  await expect(page.getByRole("button", { name: "Create plan" })).toBeVisible();
+  await expect(page.getByText("Operational status available to protocol administrators")).toBeVisible();
+  await expect(page.getByText("Protocol authority required")).toBeHidden();
+});
 test("subscriber can review cancellation and dispute actions", async ({
   page,
 }) => {

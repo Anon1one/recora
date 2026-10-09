@@ -9,8 +9,10 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
-    "test:db": "node --import tsx --test tests/database.integration.ts",
+    "test:db": "node --import tsx --test tests/database.integration.ts tests/indexer.integration.ts",
     "test:chain": "node --import tsx --test tests/lifecycle.integration.ts",
+    "deploy:devnet": "node --import tsx scripts/deploy-devnet.ts",
+    "test:devnet": "node --import tsx --test tests/devnet.integration.ts",
     "check:services": "tsx scripts/check-services.ts",
     "check:database": "tsx scripts/validate-database.ts",
     "check:api": "tsx scripts/validate-api.ts",
@@ -18,6 +20,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "jobs": "tsx scripts/scheduler.ts",
+    "indexer:retry": "tsx scripts/retry-indexer.ts",
     "helius:register": "tsx scripts/register-helius.ts"
   },
   "dependencies": {

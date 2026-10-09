@@ -1,24 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { Pool } from "pg";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { drizzle } from "drizzle-orm/node-postgres";
-if (existsSync(".env.local")) process.loadEnvFile(".env.local");
+import { databaseConfigured, testDatabase } from "./database-fixture";
 
 test(
   "Neon schema enforces deduplication, atomic jobs, one-use challenges and rollback recovery",
-  { skip: !process.env.TEST_DATABASE_URL },
+  { skip: !databaseConfigured },
   async () => {
-    assert.notEqual(
-      process.env.TEST_DATABASE_URL,
-      process.env.DATABASE_URL,
-      "Use a separate Neon test branch",
-    );
-    const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    const fixture = await testDatabase();
+    const { pool } = fixture;
     try {
-      await migrate(drizzle(pool), { migrationsFolder: "./drizzle" });
       const c = await pool.connect(),
         prefix = randomUUID();
       try {
@@ -139,7 +130,7 @@ test(
         c.release();
       }
     } finally {
-      await pool.end();
+      await fixture.close();
     }
   },
 );

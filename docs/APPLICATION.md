@@ -27,7 +27,7 @@ ANCHOR_PROVIDER_URL=<same-cluster-rpc> ANCHOR_WALLET=<keeper-wallet-path> pnpm k
 
 ## Helius and scheduling
 
-For devnet, expose `/api/webhooks/helius` through a public HTTPS deployment or development tunnel. Use `HELIUS_CALLBACK_URL` for a tunnel while keeping `APP_ORIGIN` set to the origin used in the browser. The origin must match exactly for wallet authentication and mutating browser requests.
+For devnet, expose `/api/webhooks/helius` through a public HTTPS deployment or development tunnel. Use `HELIUS_CALLBACK_URL` for a tunnel while keeping `APP_ORIGIN` set to the origin used in the browser. The application normalizes `APP_ORIGIN` to its URL origin, so a trailing slash does not break wallet authentication or mutating browser requests.
 
 ```bash
 pnpm --filter @recora/web helius:register
@@ -35,11 +35,17 @@ pnpm --filter @recora/web helius:register
 
 This command creates a Helius webhook and consumes provider credits; run it once per environment. It monitors the Recora program address using `rawDevnet` and configures the authorization value as `Bearer <HELIUS_WEBHOOK_SECRET>`. The receiver verifies that exact value, saves transaction signatures in Neon, and acknowledges before doing RPC or projection work.
 
-Invoke `/api/jobs` every minute with `Authorization: Bearer <JOB_SECRET>` using GET or POST. The local `jobs` command does this without overlapping ticks; a hosted scheduler can call the same endpoint. Configure a 60-second runtime limit for that route. Each invocation backfills one signature page, processes at most ten transactions, and attempts at most three webhook deliveries, subject to a time budget. High-volume deployments should increase scheduling frequency or move the same job functions to a dedicated worker.
+Invoke `/api/jobs` every minute with `Authorization: Bearer <JOB_SECRET>` using GET or POST. The local `jobs` command does this without overlapping ticks; a hosted scheduler can call the same endpoint. Configure a 60-second runtime limit for that route. Each invocation backfills one signature page and defaults to 100 index operations and 100 webhook attempts, with separate 20-second budgets and an overall deadline. `INDEXER_BATCH_LIMIT` and `WEBHOOK_BATCH_LIMIT` accept integers from 1 to 1000. Canonical block signatures are fetched once per slot within a run. Jobs also delete up to 1000 expired rows from each auth/session/rate-limit table. High-volume deployments should increase scheduling frequency or move the same job functions to a dedicated worker.
 
 Incoming payloads are hints. The indexer refetches successful finalized transactions, verifies Recora invocation logs, and decodes events with the generated codecs. Canonical ordering is `(slot, transaction index, log index)`. Unique transaction/event constraints and transaction-level locks make duplicate notifications and crashes safe. Projection writes and the webhook outbox commit together. Closed accounts retain their event history and final state.
 
-Backfill uses a saved signature cursor. Live ingestion can overlap safely with backfill; late history rebuilds affected projections. Truncated logs, missing transaction metadata, and incomplete subscription/charge histories stay pending with a visible recovery error. RPC history must cover the deployment's lifecycle; the application cannot reconstruct deleted history from current accounts alone. Full initial backfill does not send historical merchant webhooks to newly registered endpoints.
+Backfill uses a saved signature cursor. Live ingestion can overlap safely with backfill; late history rebuilds affected projections. Failed on-chain and unrelated transactions are ignored. Truncated logs, missing metadata, and incomplete histories retry every minute and become `failed` after ten failures. After restoring missing history or fixing an RPC/client problem, replay one failed signature with `pnpm --filter @recora/web indexer:retry <signature>`. RPC history must cover the deployment's lifecycle; the application cannot reconstruct deleted history from current accounts alone. Full initial backfill does not send historical merchant webhooks to newly registered endpoints.
+
+The relay queues only transactions with a direct Recora instruction. Helius ingestion stores signatures rather than the full incoming batch. Migration `0001` clears legacy batch payloads and retires existing unrelated or exhausted queue entries; apply migrations before deploying the updated application. The nullable legacy payload column remains for rolling deployment compatibility.
+
+On Vercel, IP limits use the platform-provided `x-vercel-forwarded-for` header. Outside Vercel, the application ignores forwarded headers and uses a shared bucket; do not expose it publicly behind another proxy without adding trusted proxy configuration. Postgres counters enforce 20 auth requests/minute/IP, 120 RPC requests/minute/IP, 20 transaction submissions/minute/wallet, and 60 combined public network/plan reads/minute/IP. Responses exceeding a limit return `429` and `Retry-After`. Service-authenticated jobs and Helius requests use their separate secrets.
+
+`GET /api/health` exposes operational details only to the protocol-authority wallet or `Authorization: Bearer <JOB_SECRET>`. Monitor pending queue age/count, failed transactions, backfill progress, and failed webhook deliveries. Ordinary merchant login does not depend on this endpoint. Analytics aggregates amounts and dated counts in SQL and retains prior subscription state when calculating churn.
 
 ## HTTP API
 
@@ -136,4 +142,4 @@ pnpm --filter @recora/web test:chain
 
 The test refuses non-local RPC hosts and skips if `LOCAL_UPGRADE_WALLET` is unset. Existing Rust and validator tests continue to verify on-chain lifecycle behavior.
 
-Set `TEST_DATABASE_URL` to a **separate Neon branch** for `pnpm --filter @recora/web test:db`. Tests refuse a connection equal to `DATABASE_URL`, run migrations on the test branch, and roll back fixture rows. CI runs this suite when its `TEST_DATABASE_URL` secret is configured; otherwise it reports the database suite as skipped. No production resource creation, mainnet deployment, or paid infrastructure is included.
+Set `TEST_DATABASE_URL` for `pnpm --filter @recora/web test:db`, or explicitly run `ALLOW_SHARED_TEST_DATABASE=1 pnpm --filter @recora/web test:db` to use the existing `DATABASE_URL`. Tests create and verify an isolated schema, including foreign keys and migration history, then drop that schema. CI runs this suite when its `TEST_DATABASE_URL` secret is configured; otherwise it reports the database suite as skipped. The dedicated devnet suite and RPC pacing are documented in [DEVNET_DEPLOYMENT.md](DEVNET_DEPLOYMENT.md).

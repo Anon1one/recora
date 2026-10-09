@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { transaction } from "./db";
+import { pool, transaction } from "./db";
 import type { PoolClient } from "pg";
 import { cluster } from "./env";
 import { decrypt, postWebhook, signature } from "./security";
 import { historyBatch, processNext } from "./indexer";
+import { rpc } from "./codec";
 
 export const retryDelays = [60, 300, 1800, 7200, 43200];
 export async function deliverNext() {
@@ -57,8 +58,30 @@ export async function attemptDelivery(
   );
   return true;
 }
+export async function cleanupExpired() {
+  const deleted: Record<string, number> = {};
+  for (const table of ["auth_challenges", "sessions", "rate_limits"]) {
+    const result = await pool().query(
+      `DELETE FROM ${table} WHERE ctid IN
+       (SELECT ctid FROM ${table} WHERE expires_at<=now() ORDER BY expires_at LIMIT 1000 FOR UPDATE SKIP LOCKED)`,
+    );
+    deleted[table] = result.rowCount || 0;
+  }
+  return deleted;
+}
+
+function batchLimit(name: string) {
+  const value = Number(process.env[name] || 100);
+  if (!Number.isInteger(value) || value < 1 || value > 1000)
+    throw new Error(`${name} must be an integer between 1 and 1000`);
+  return value;
+}
+
 export async function runJobs() {
   const started = Date.now();
+  const indexLimit = batchLimit("INDEXER_BATCH_LIMIT"),
+    deliveryLimit = batchLimit("WEBHOOK_BATCH_LIMIT");
+  const cleanup = await cleanupExpired();
   let history: unknown;
   try {
     history = await historyBatch();
@@ -67,13 +90,18 @@ export async function runJobs() {
   }
   let indexed = 0,
     delivered = 0;
-  while (Date.now() - started < 20_000 && indexed < 10 && (await processNext()))
+  const connection = rpc(), blockCache = new Map<number, string[]>();
+  const indexStarted = Date.now();
+  while (Date.now() - indexStarted < 20_000 && Date.now() - started < 30_000 && indexed < indexLimit &&
+    (await processNext({ connection, blockCache })))
     indexed++;
+  const deliveryStarted = Date.now();
   while (
-    Date.now() - started < 40_000 &&
-    delivered < 3 &&
+    Date.now() - deliveryStarted < 20_000 &&
+    Date.now() - started < 45_000 &&
+    delivered < deliveryLimit &&
     (await deliverNext())
   )
     delivered++;
-  return { history, indexed, delivered };
+  return { history, indexed, delivered, cleanup };
 }

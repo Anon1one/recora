@@ -18,6 +18,7 @@ export const transactions = pgTable(
     signature: text().notNull(),
     slot: bigint({ mode: "number" }),
     txIndex: integer("tx_index"),
+    // Legacy column retained for rolling deployments; ingestion no longer writes it.
     payload: jsonb(),
     status: text().notNull().default("pending"),
     attempts: integer().notNull().default(0),
@@ -58,6 +59,7 @@ export const events = pgTable(
       t.logIndex,
     ),
     index("event_merchant").on(t.cluster, t.merchant),
+    index("event_merchant_date").on(t.cluster, t.merchant, t.occurredAt),
   ],
 );
 export const entities = pgTable(
@@ -87,12 +89,17 @@ export const challenges = pgTable("auth_challenges", {
   wallet: text().notNull(),
   message: text().notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-});
+}, (t) => [index("challenge_expiry").on(t.expiresAt)]);
 export const sessions = pgTable("sessions", {
   hash: text().primaryKey(),
   wallet: text().notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-});
+}, (t) => [index("session_expiry").on(t.expiresAt)]);
+export const rateLimits = pgTable("rate_limits", {
+  id: text().primaryKey(),
+  count: integer().notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (t) => [index("rate_limit_expiry").on(t.expiresAt)]);
 export const apiKeys = pgTable("api_keys", {
   id: text().primaryKey(),
   merchant: text().notNull(),

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 if (existsSync(".env.local")) process.loadEnvFile(".env.local");
-const endpoint = `${process.env.APP_ORIGIN || "http://localhost:3000"}/api/jobs`;
+const endpoint = new URL("/api/jobs", process.env.APP_ORIGIN || "http://localhost:3000");
 if (!process.env.JOB_SECRET) throw new Error("Configure JOB_SECRET");
 let busy = false;
 async function tick() {

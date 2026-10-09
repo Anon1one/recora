@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { Keypair } from "@solana/web3.js";
 import nacl from "tweetnacl";
 if (existsSync(".env.local")) process.loadEnvFile(".env.local");
-const base = process.env.APP_ORIGIN || "http://localhost:3000";
+const base = new URL(process.env.APP_ORIGIN || "http://localhost:3000").origin;
 assert(
   ["localhost", "127.0.0.1"].includes(new URL(base).hostname),
   "API smoke tests are local-only",

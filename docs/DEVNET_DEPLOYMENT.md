@@ -97,7 +97,7 @@ APP_ORIGIN=http://localhost:3000
 HELIUS_CALLBACK_URL=https://your-tunnel.example/api/webhooks/helius
 ```
 
-`APP_ORIGIN` must exactly match the browser origin for authentication and mutating requests. When `HELIUS_CALLBACK_URL` is empty, registration uses `${APP_ORIGIN}/api/webhooks/helius`.
+`APP_ORIGIN` is normalized with `new URL(value).origin` for authentication and mutating requests. When `HELIUS_CALLBACK_URL` is empty, registration uses `${APP_ORIGIN}/api/webhooks/helius`.
 
 Use a fresh Neon development branch for a fresh deployment. The current database identities use cluster and account/signature identifiers; indexer checkpoints use the cluster alone. Reusing the same database for a different program ID requires a deliberate reset or migration of the affected indexer state.
 
@@ -202,6 +202,19 @@ Confirm it reports application tables, a deployed program, and initialized proto
 7. Test a merchant webhook failure and confirm retry/replay behavior.
 
 `check:api` is restricted to a local application origin. The chain integration and keeper smoke suites target a local validator; do not run them against devnet as deployment checks.
+
+The dedicated devnet suite exercises wallet authentication, transaction builders and relay, subscribe/bill/dispute/contest/resolve/refund/cancel/close, authenticated Helius ingestion, real Postgres indexing/projections, analytics, and signed webhook retry handling:
+
+```bash
+pnpm --filter @recora/web deploy:devnet
+RUN_DEVNET_TEST=1 ALLOW_SHARED_TEST_DATABASE=1 pnpm --filter @recora/web test:devnet
+```
+
+`deploy:devnet` checks the actual devnet genesis hash, uses the existing program keypair and configured RPC, and skips upgrades when the program is already deployed. `DEVNET_WALLET` defaults to `~/.config/solana/id.json`; retain the generated deployment buffer under ignored `target/deploy` if a deployment needs resuming. Build the program before deploying it.
+
+The test spends devnet SOL from that wallet to fund fresh role wallets, avoiding faucet throttling. It initializes an absent protocol with a devnet test mint; for an existing configuration, the test wallet must control that mint and the protocol must permit short billing intervals. All RPC calls are serialized with at least 750 ms between starts, with bounded exponential backoff for HTTP 429/503 or RPC node-unhealthy responses. Finalization polling runs every three seconds with a two-minute deadline. The outbound HTTPS receiver is a deterministic signing/503/retry fixture, not a hosted merchant endpoint. Live Helius provider registration and external HTTPS delivery still require the manual checks above.
+
+Tests prefer `TEST_DATABASE_URL`. `ALLOW_SHARED_TEST_DATABASE=1` explicitly permits the existing `DATABASE_URL`; tables, foreign keys, and migration history are confined to a generated schema that is dropped afterward. Do not configure both URLs to avoid accidentally selecting the wrong database. The same isolated harness supports `test:db`.
 
 The keeper smoke fixtures use valid associated token accounts: the installed SPL `createAccount` helper creates an ATA when no keypair is supplied.
 

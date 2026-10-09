@@ -1,5 +1,5 @@
 import type { PoolClient } from "pg";
-import { PublicKey } from "@solana/web3.js";
+import type { Connection, GetVersionedTransactionConfig, VersionedTransactionResponse } from "@solana/web3.js";
 import { pool, transaction } from "./db";
 import {
   account,
@@ -14,13 +14,13 @@ import {
 import { cluster } from "./env";
 import { project, type StoredEvent } from "./projector";
 
-export async function receive(signatures: string[], payload: unknown = null) {
+export async function receive(signatures: string[]) {
   if (!signatures.length) return;
   await pool().query(
-    `INSERT INTO chain_transactions (id,cluster,signature,payload)
-    SELECT $1 || ':' || signature,$1,signature,$3::jsonb FROM unnest($2::text[]) AS signature
+    `INSERT INTO chain_transactions (id,cluster,signature)
+    SELECT $1 || ':' || signature,$1,signature FROM unnest($2::text[]) AS signature
     ON CONFLICT (id) DO NOTHING`,
-    [cluster(), [...new Set(signatures)], JSON.stringify(payload)],
+    [cluster(), [...new Set(signatures)]],
   );
 }
 
@@ -76,13 +76,14 @@ async function contextFor(
   c: PoolClient,
   type: string,
   data: Data,
+  loadAccount: typeof account,
 ): Promise<Data> {
   if (type === "MerchantInitialized") {
-    const merchant = await account("Merchant", data.merchant);
+    const merchant = await loadAccount("Merchant", data.merchant);
     return { authority: merchant.authority, payoutAta: merchant.payoutAta };
   }
   if (type === "PlanCreated" || type === "Subscribed") {
-    const plan = await account("Plan", data.plan);
+    const plan = await loadAccount("Plan", data.plan);
     return {
       merchant: plan.merchant,
       plan: data.plan,
@@ -106,7 +107,7 @@ async function contextFor(
     if (prior) return prior.data.context;
     // The event can arrive ahead of its subscription history. This snapshot
     // routes it correctly, but projection still requires the missing history.
-    const sub = await account("Subscription", data.subscription);
+    const sub = await loadAccount("Subscription", data.subscription);
     return {
       merchant: sub.merchant,
       plan: sub.plan,
@@ -155,7 +156,17 @@ export async function rebuild(c: PoolClient, subject: string) {
   );
 }
 
-export async function processNext() {
+export const maxIndexAttempts = 10;
+export type IndexerOptions = {
+  connection?: {
+    getTransaction(signature: string, config: GetVersionedTransactionConfig): Promise<VersionedTransactionResponse | null>;
+    getBlockSignatures: Connection["getBlockSignatures"];
+  };
+  loadAccount?: typeof account;
+  blockCache?: Map<number, string[]>;
+};
+
+export async function processNext(options: IndexerOptions = {}) {
   // One transaction and an advisory lock serialize projection writes while
   // retaining durable work after crashes. External requests have bounded timeouts.
   return transaction(async (c) => {
@@ -175,8 +186,10 @@ export async function processNext() {
     const row = rows[0];
     if (!row) return false;
     await c.query("SAVEPOINT ingest");
+    let fetchedSlot: number | null = null;
     try {
-      const tx = await rpc().getTransaction(row.signature, {
+      const connection = options.connection || rpc();
+      const tx = await connection.getTransaction(row.signature, {
         commitment: "finalized",
         maxSupportedTransactionVersion: 0,
       });
@@ -184,34 +197,45 @@ export async function processNext() {
         throw new Error(
           "Transaction not finalized yet or RPC history unavailable",
         );
+      fetchedSlot = tx.slot;
       if (tx.meta?.err) {
         await c.query(
-          "UPDATE chain_transactions SET status='ignored',slot=$2 WHERE id=$1",
+          "UPDATE chain_transactions SET status='ignored',slot=$2,error=NULL WHERE id=$1",
           [row.id, tx.slot],
         );
         return true;
       }
-      if (!tx.meta?.logMessages || tx.blockTime == null)
-        throw new Error("Transaction metadata/history unavailable");
+      if (!tx.meta) throw new Error("Transaction metadata/history unavailable");
       const message = tx.transaction.message;
       const keys = message.getAccountKeys({
         accountKeysFromLookups: tx.meta.loadedAddresses,
       });
-      if (
-        !Array.from({ length: keys.length }, (_, i) =>
-          keys.get(i)?.toBase58(),
-        ).includes(program().toBase58())
-      )
-        throw new Error("Transaction does not involve Recora");
-      const block = await rpc().getBlockSignatures(tx.slot, "finalized");
-      const txIndex = block?.signatures?.indexOf(row.signature) ?? -1;
+      const invokesRecora = [...message.compiledInstructions,
+        ...(tx.meta.innerInstructions || []).flatMap((entry) => entry.instructions)]
+        .some((instruction) => keys.get(instruction.programIdIndex)?.equals(program()));
+      if (!invokesRecora) {
+        await c.query(
+          "UPDATE chain_transactions SET status='ignored',slot=$2,error=NULL WHERE id=$1",
+          [row.id, tx.slot],
+        );
+        return true;
+      }
+      if (!tx.meta.logMessages || tx.blockTime == null)
+        throw new Error("Transaction metadata/history unavailable");
+      let signatures = options.blockCache?.get(tx.slot);
+      if (!signatures) {
+        const block = await connection.getBlockSignatures(tx.slot, "finalized");
+        signatures = block?.signatures;
+        if (signatures) options.blockCache?.set(tx.slot, signatures);
+      }
+      const txIndex = signatures?.indexOf(row.signature) ?? -1;
       if (txIndex < 0)
         throw new Error("Canonical transaction order unavailable");
       const decoded = decodeEvents(tx.meta.logMessages);
       const subjects = new Set<string>();
       for (const event of decoded) {
         const data = event.data,
-          context = await contextFor(c, event.type, data);
+          context = await contextFor(c, event.type, data, options.loadAccount || account);
         const subject =
           data.subscription ||
           data.plan ||
@@ -250,10 +274,11 @@ export async function processNext() {
       await c.query("ROLLBACK TO SAVEPOINT ingest");
       const message =
         error instanceof Error ? error.message : "Indexing failed";
-      // Incomplete history remains retryable, and is visible in system health.
+      // Keep transient/history failures recoverable without allowing poison
+      // rows to consume every future job run. Operators can replay failed work.
       await c.query(
-        "UPDATE chain_transactions SET slot=COALESCE(slot,$3),attempts=attempts+1,error=$2,next_attempt=now()+interval '1 minute' WHERE id=$1",
-        [row.id, message, null],
+        "UPDATE chain_transactions SET slot=COALESCE(slot,$3),attempts=attempts+1,status=CASE WHEN attempts+1 >= $4 THEN 'failed' ELSE 'pending' END,error=$2,next_attempt=now()+interval '1 minute' WHERE id=$1",
+        [row.id, message, fetchedSlot, maxIndexAttempts],
       );
     }
     return true;

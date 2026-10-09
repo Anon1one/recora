@@ -27,6 +27,8 @@ import {
 } from "../src/lib/security";
 import { actionSchemas, legacyInstruction } from "../src/lib/transactions";
 import { retryDelays } from "../src/lib/jobs";
+import { clientIp } from "../src/lib/rate-limit";
+import { origin } from "../src/lib/env";
 
 const wallet = Keypair.generate(),
   other = Keypair.generate(),
@@ -213,6 +215,37 @@ test("wallet signatures bind the wallet, origin and exact challenge", () => {
       ),
     /origin/,
   );
+});
+test("origin normalization accepts a trailing slash without accepting another origin", () => {
+  process.env.APP_ORIGIN = "http://localhost:3000/";
+  assert.equal(origin(), "http://localhost:3000");
+  sameOrigin(new Request("http://localhost:3000/api/auth/challenge", {
+    headers: { origin: "http://localhost:3000" },
+  }));
+  assert.throws(() => sameOrigin(new Request("http://localhost:3000", {
+    headers: { origin: "http://localhost:3001" },
+  })), /origin/);
+});
+test("client IP buckets trust Vercel only and canonicalize IPv6", () => {
+  const previous = process.env.VERCEL;
+  try {
+    delete process.env.VERCEL;
+    assert.equal(clientIp(new Request("http://localhost", {
+      headers: { "x-vercel-forwarded-for": "8.8.8.8" },
+    })), "local");
+    process.env.VERCEL = "1";
+    assert.equal(clientIp(new Request("http://localhost", {
+      headers: { "x-forwarded-for": "8.8.8.8" },
+    })), "unknown");
+    assert.equal(clientIp(new Request("http://localhost", {
+      headers: { "x-vercel-forwarded-for": "2001:4860:0000::8888" },
+    })), clientIp(new Request("http://localhost", {
+      headers: { "x-vercel-forwarded-for": "2001:4860::8888" },
+    })));
+  } finally {
+    if (previous === undefined) delete process.env.VERCEL;
+    else process.env.VERCEL = previous;
+  }
 });
 test("merchant-scoped credentials cannot read another tenant", async () => {
   await assert.rejects(

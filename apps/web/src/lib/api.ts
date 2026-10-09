@@ -26,11 +26,12 @@ import {
   type Identity,
 } from "./auth";
 import { cluster, origin, programId, required } from "./env";
-import { destination, encrypt, hash, token } from "./security";
+import { destination, encrypt, equal, hash, token } from "./security";
 import { receive } from "./indexer";
 import { runJobs } from "./jobs";
 import { buildTransaction } from "./transactions";
-import { analytics } from "./projector";
+import { merchantAnalytics } from "./analytics";
+import { limitRequest, rateLimit } from "./rate-limit";
 import { eventCodecs } from "./generated";
 const supportedWebhookEvents = new Set(Object.keys(eventCodecs).map(eventName));
 
@@ -150,15 +151,35 @@ async function handler(request: Request, path: string[]) {
       )
       .max(100)
       .parse(await body(request, 1_048_576));
-    await receive(
-      payload.map((tx) => tx.transaction.signatures[0]),
-      payload,
-    );
+    await receive(payload.map((tx) => tx.transaction.signatures[0]));
     return response({ received: payload.length });
   }
   if (route === "jobs" && (method === "POST" || method === "GET")) {
     secretAuth(request, required("JOB_SECRET"));
     return response(await runJobs());
+  }
+  if (route === "health" && method === "GET") {
+    if (equal(request.headers.get("authorization") || "", `Bearer ${required("JOB_SECRET")}`)) {
+      secretAuth(request, required("JOB_SECRET"));
+    } else {
+      const who = await identity(request);
+      walletOnly(who);
+      const config = await account("Config", pda("config"));
+      if (config.authority !== who.wallet)
+        throw new HttpError(403, "Protocol authority required");
+    }
+    const queue = (await pool().query(
+      "SELECT status,count(*)::int AS count,min(received_at) AS oldest_received,max(received_at) AS last_received FROM chain_transactions WHERE cluster=$1 GROUP BY status",
+      [cluster()],
+    )).rows;
+    const errors = (await pool().query(
+      "SELECT signature,error,attempts,status FROM chain_transactions WHERE cluster=$1 AND error IS NOT NULL ORDER BY received_at DESC LIMIT 10",
+      [cluster()],
+    )).rows;
+    const checkpoint = (await pool().query(
+      "SELECT data,updated_at FROM checkpoints WHERE id=$1", [`${cluster()}:history`],
+    )).rows[0] || null;
+    return response({ queue, errors, checkpoint });
   }
   if (route === "network" && method === "GET") {
     let config = null,
@@ -198,6 +219,7 @@ async function handler(request: Request, path: string[]) {
       throw new HttpError(
         429,
         "Wait for your current sign-in challenges to expire",
+        300,
       );
     return response(await challenge(input.wallet));
   }
@@ -252,6 +274,7 @@ async function handler(request: Request, path: string[]) {
       })
       .parse(await body(request));
     if (input.method === "sendTransaction") {
+      await rateLimit("submit", who.wallet, 20);
       const [encoded] = input.params;
       if (typeof encoded !== "string" || encoded.length > 2200)
         throw new HttpError(400, "Invalid transaction");
@@ -268,7 +291,8 @@ async function handler(request: Request, path: string[]) {
       );
       // Sending has already succeeded; Helius/catch-up can recover if the
       // durable hint cannot be stored. Never report a successful send as failed.
-      await receive([signature]).catch(() => {});
+      if (tx.instructions.some((instruction) => instruction.programId.equals(program())))
+        await receive([signature]).catch(() => {});
       return response({ result: signature });
     }
     if (input.method === "getSignatureStatuses") {
@@ -373,17 +397,14 @@ async function handler(request: Request, path: string[]) {
         to = new Date(url.searchParams.get("to") || Date.now());
       if (!Number.isFinite(+from) || !Number.isFinite(+to) || from >= to)
         throw new HttpError(400, "Use an increasing UTC date range");
-      const { rows } = await pool().query(
-        "SELECT * FROM chain_events WHERE cluster=$1 AND merchant=$2 ORDER BY slot,tx_index,log_index",
-        [cluster(), merchant],
-      );
+      const stats = await merchantAnalytics(merchant, from, to);
       const held = (
         await pool().query(
           "SELECT COALESCE(sum((data->>'amount')::numeric),0)::text AS amount FROM entities WHERE cluster=$1 AND merchant=$2 AND kind='charge' AND state IN ('held','disputed','contested')",
           [cluster(), merchant],
         )
       ).rows[0].amount;
-      return response({ ...analytics(rows, from, to), held, from, to });
+      return response({ ...stats, held, from, to });
     }
     if (path[2] === "keys") {
       walletOnly(who);
@@ -521,34 +542,12 @@ async function handler(request: Request, path: string[]) {
       }
     }
   }
-  if (route === "health" && method === "GET") {
-    walletOnly(who);
-    const queue = (
-      await pool().query(
-        "SELECT status,count(*)::int AS count,max(received_at) AS last_received FROM chain_transactions WHERE cluster=$1 GROUP BY status",
-        [cluster()],
-      )
-    ).rows;
-    const errors = (
-      await pool().query(
-        "SELECT signature,error,attempts FROM chain_transactions WHERE cluster=$1 AND error IS NOT NULL ORDER BY received_at DESC LIMIT 10",
-        [cluster()],
-      )
-    ).rows;
-    const checkpoint =
-      (
-        await pool().query(
-          "SELECT data,updated_at FROM checkpoints WHERE id=$1",
-          [`${cluster()}:history`],
-        )
-      ).rows[0] || null;
-    return response({ queue, errors, checkpoint });
-  }
   throw new HttpError(404, "Endpoint not found");
 }
 
 export async function handle(request: Request, path: string[]) {
   try {
+    await limitRequest(request, path);
     // Public plan checkout is intentionally available before wallet login.
     if (request.method === "GET" && path[0] === "plans" && path.length === 2) {
       const plan = await account("Plan", publicKey(path[1]));
@@ -557,8 +556,11 @@ export async function handle(request: Request, path: string[]) {
     }
     return await handler(request, path);
   } catch (error) {
-    if (error instanceof HttpError)
-      return response({ error: error.message }, error.status);
+    if (error instanceof HttpError) {
+      const result = response({ error: error.message }, error.status);
+      if (error.retryAfter) result.headers.set("Retry-After", String(error.retryAfter));
+      return result;
+    }
     if (error instanceof ChainAccountError)
       return response({ error: error.message }, error.status);
     if (error instanceof z.ZodError)

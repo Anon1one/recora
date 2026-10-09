@@ -7,4 +7,4 @@ export const cluster = () => process.env.SOLANA_CLUSTER || "devnet";
 export const programId = () =>
   process.env.RECORA_PROGRAM_ID ||
   "ByzDYmPuV1FK7Z4RMGLgnqELFLZf3u2GoRSsB9bTndiu";
-export const origin = () => required("APP_ORIGIN");
+export const origin = () => new URL(required("APP_ORIGIN")).origin;
