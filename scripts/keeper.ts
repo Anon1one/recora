@@ -91,12 +91,17 @@ function bs58Byte(value: number): string {
   return "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"[value];
 }
 
-/** Chain time, so "due" matches the program's Clock, not this machine's clock. */
+/** Chain time, so "due" matches the program's Clock, not this machine's clock.
+ *  Read at "confirmed", the bank send() simulates against: a processed slot can
+ *  be a second ahead of it, and the preflight then rejects the cycle as NotDue. */
 async function chainNow(connection: Connection): Promise<number> {
-  const slot = await connection.getSlot();
+  const slot = await connection.getSlot("confirmed");
   const blockTime = await connection.getBlockTime(slot);
   return blockTime ?? Math.floor(Date.now() / 1000);
 }
+
+// The program saying "not yet" means its Clock is behind ours; the next crank retries.
+const NOT_YET = /Error Code: (NotDue|ReviewWindowNotElapsed|DisputeNotTimedOut)\./;
 
 /** Per-crank caches: the mint's token program and merchants. */
 class Lookups {
@@ -125,12 +130,22 @@ class Lookups {
   }
 }
 
-async function logError(connection: Connection, what: string, err: any) {
-  console.error(`[Error] ${what}:`, err?.message || err);
+async function errorLogs(connection: Connection, err: any): Promise<string[] | undefined> {
   let logs: string[] | undefined = err?.logs;
   if (!logs && typeof err?.getLogs === "function") {
     logs = await err.getLogs(connection).catch(() => undefined);
   }
+  return logs;
+}
+
+async function notYet(connection: Connection, err: any): Promise<boolean> {
+  const logs = (await errorLogs(connection, err)) ?? [];
+  return [String(err?.message ?? ""), ...logs].some((l) => NOT_YET.test(l));
+}
+
+async function logError(connection: Connection, what: string, err: any) {
+  console.error(`[Error] ${what}:`, err?.message || err);
+  const logs = await errorLogs(connection, err);
   if (logs?.length) console.error(logs.join("\n"));
   metrics.errors++;
 }
@@ -211,6 +226,10 @@ async function runKeeperCrank(program: Program<Recora>, provider: AnchorProvider
           metrics.billingRuns++;
         }
       } catch (err: any) {
+        if (await notYet(connection, err)) {
+          console.log(`[Not Yet] ${subPubkey.toBase58()} is not due on chain yet; retrying next crank.`);
+          continue;
+        }
         await logError(connection, `Failed to process billing for ${subPubkey.toBase58()}`, err);
       }
     }
@@ -288,6 +307,10 @@ async function runKeeperCrank(program: Program<Recora>, provider: AnchorProvider
           metrics.disputeRefunds++;
         }
       } catch (err: any) {
+        if (await notYet(connection, err)) {
+          console.log(`[Not Yet] Charge ${chargePubkey.toBase58()} is not due on chain yet; retrying next crank.`);
+          continue;
+        }
         await logError(connection, `Failed to settle charge ${chargePubkey.toBase58()}`, err);
       }
     }
