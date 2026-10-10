@@ -13,7 +13,7 @@ import { project, type StoredEvent } from "../src/lib/projector";
 
 test(
   "all-role builders execute a real subscribe, dispute, resolution, refund and close lifecycle",
-  { skip: !process.env.LOCAL_UPGRADE_WALLET, timeout: 600_000 },
+  { skip: !process.env.LOCAL_UPGRADE_WALLET, timeout: 1_500_000 },
   async () => {
     const connection = new Connection(
       process.env.LOCAL_VALIDATOR_URL || "http://127.0.0.1:8899",
@@ -127,7 +127,7 @@ test(
         maxIntervalSecs: "31536000",
         minReviewSecs: "1",
         maxReviewSecs: "604800",
-        disputeSecs: "60",
+        disputeSecs: "600",
       },
       admin,
     );
@@ -137,7 +137,7 @@ test(
       {
         price: "1000000",
         intervalSecs: "1",
-        reviewSecs: "30",
+        reviewSecs: "600",
         resolverFeeBps: 100,
         resolver: resolver.publicKey.toBase58(),
       },

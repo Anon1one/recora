@@ -13,7 +13,8 @@
     "keeper": "ts-node scripts/keeper.ts",
     "test:ts": "ts-mocha -p ./tsconfig.json -t 1000000 'tests/**/*.spec.ts'",
     "test:keeper": "ts-node tests/keeper.smoke.ts",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "test:devnet": "ts-mocha -p ./tsconfig.json -t 1000000 tests/happy-path.devnet.ts"
   },
   "dependencies": {
     "@anchor-lang/core": "^1.0.0",
