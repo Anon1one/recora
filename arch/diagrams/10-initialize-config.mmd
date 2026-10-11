@@ -1,0 +1,36 @@
+---
+title: "initialize_config (once, at deployment) · REQ-01"
+config:
+  flowchart:
+    rankSpacing: 28
+    nodeSpacing: 30
+    wrappingWidth: 260
+---
+flowchart TD
+  classDef signer fill:#ffffff,stroke:#111,stroke-width:3px,color:#111
+  classDef benef fill:#ffffff,stroke:#555,stroke-width:1px,stroke-dasharray:2 2,color:#111
+  classDef billing fill:#fde7cf,stroke:#c46a00,stroke-width:2px,color:#111
+  classDef settle fill:#d9e8fb,stroke:#1f5fae,stroke-width:2px,color:#111
+  classDef admin fill:#e6e6e6,stroke:#555,stroke-width:2px,color:#111
+  classDef pda fill:#dcf3dc,stroke:#2e7d32,stroke-width:2px,stroke-dasharray:6 3,color:#111
+  classDef tok fill:#fff6c2,stroke:#9a7b00,stroke-width:1.5px,color:#111
+  classDef xprog fill:#ece3fa,stroke:#6a3fb5,stroke-width:2px,color:#111
+  classDef err fill:#fde2e2,stroke:#b00020,stroke-width:2px,color:#111
+  classDef note fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#333
+  classDef ext fill:#ffffff,stroke:#555,stroke-width:1.5px,color:#111
+  classDef road fill:#ffffff,stroke:#999,stroke-width:1px,stroke-dasharray:8 4,color:#666
+
+
+  A(["Deployer<br/>signer, pays rent"]):::signer -->|"initialize_config · REQ-01"| IX["initialize_config"]:::admin
+  IX --> D1{"signer == program upgrade authority?<br/>(program + program_data passed)"}
+  D1 -- no --> E1["Error: NotUpgradeAuthority"]:::err
+  D1 -- yes --> D2{"fee_bps ≤ 100,<br/>max_resolver_fee_bps ≤ 1000?"}
+  D2 -- no --> E2["Error: FeeTooHigh"]:::err
+  D2 -- yes --> D3{"min ≤ max for the review and interval<br/>bounds, dispute_secs > 0?"}
+  D3 -- no --> E3["Error: InvalidWindowBounds"]:::err
+  D3 -- yes --> C1["init Config PDA 'config'<br/>authority = signer, paused = false"]:::pda
+  C1 --> C2["init Fee treasury PDA 'treasury'<br/>token account, mint USDC, authority = Config"]:::pda
+  C1 -.->|"CPI"| SYS["System program"]:::xprog
+  C2 -.->|"CPI initialize_account"| SPL["SPL Token program"]:::xprog
+  N1["Bound to the upgrade authority: the seed is a constant, so otherwise<br/>a bot watching the deploy could become the authority in the same block."]:::note
+  D1 -.- N1

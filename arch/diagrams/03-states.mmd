@@ -1,0 +1,28 @@
+---
+title: "Recora State Machines (Subscription and Charge)"
+---
+stateDiagram-v2
+  direction LR
+
+  state "Subscription" as SUBSM {
+    [*] --> Active: subscribe · REQ-06
+    Active --> Active: process_billing funded · REQ-08<br/>(new Charge, next_billing_ts += interval)
+    Active --> Lapsed: process_billing unfunded · REQ-09
+    Active --> Cancelled: cancel_subscription · REQ-15
+    Lapsed --> Cancelled: cancel_subscription · REQ-15
+    Cancelled --> [*]: close_subscription · REQ-16<br/>(open_charges == 0)
+    Lapsed --> [*]: close_subscription · REQ-16<br/>(open_charges == 0)
+  }
+
+  state "Charge (one per cycle)" as CHGSM {
+    [*] --> Held: process_billing · REQ-08
+    Held --> Settled: settle_charge, window over · REQ-11
+    Held --> Disputed: dispute_charge, in window · REQ-10
+    Held --> Refunded: refund_charge · REQ-13
+    Disputed --> Refunded: refund_charge · REQ-13
+    Disputed --> Resolved: resolve_dispute · REQ-14
+    Disputed --> Refunded: settle_charge, dispute timed out · REQ-12
+    Settled --> [*]: Charge closed
+    Refunded --> [*]: Charge closed
+    Resolved --> [*]: Charge closed
+  }

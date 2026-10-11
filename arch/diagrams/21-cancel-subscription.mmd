@@ -1,0 +1,34 @@
+---
+title: "cancel_subscription · REQ-15"
+config:
+  flowchart:
+    rankSpacing: 28
+    nodeSpacing: 30
+    wrappingWidth: 260
+---
+flowchart TD
+  classDef signer fill:#ffffff,stroke:#111,stroke-width:3px,color:#111
+  classDef benef fill:#ffffff,stroke:#555,stroke-width:1px,stroke-dasharray:2 2,color:#111
+  classDef billing fill:#fde7cf,stroke:#c46a00,stroke-width:2px,color:#111
+  classDef settle fill:#d9e8fb,stroke:#1f5fae,stroke-width:2px,color:#111
+  classDef admin fill:#e6e6e6,stroke:#555,stroke-width:2px,color:#111
+  classDef pda fill:#dcf3dc,stroke:#2e7d32,stroke-width:2px,stroke-dasharray:6 3,color:#111
+  classDef tok fill:#fff6c2,stroke:#9a7b00,stroke-width:1.5px,color:#111
+  classDef xprog fill:#ece3fa,stroke:#6a3fb5,stroke-width:2px,color:#111
+  classDef err fill:#fde2e2,stroke:#b00020,stroke-width:2px,color:#111
+  classDef note fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#333
+  classDef ext fill:#ffffff,stroke:#555,stroke-width:1.5px,color:#111
+  classDef road fill:#ffffff,stroke:#999,stroke-width:1px,stroke-dasharray:8 4,color:#666
+
+
+  S(["Subscriber<br/>signer"]):::signer -->|"cancel_subscription · REQ-15"| IX["cancel_subscription"]:::billing
+  IX --> D1{"signer == subscription.subscriber?"}
+  D1 -- no --> E1["Error: Unauthorized"]:::err
+  D1 -- yes --> D2{"status ∈ {Active, Lapsed}?"}
+  D2 -- no --> E2["Error: InvalidState"]:::err
+  D2 -- yes --> U["if status was Active: plan.subs_count −= 1<br/>status = Cancelled<br/>emit SubscriptionCancelled"]:::pda
+  DASH@{ shape: cloud, label: "Subscriber dashboard" }
+  U -.->|"if this was the last active subscription"| DASH
+  DASH -.->|"client-side SPL revoke (one click)"| SPL["SPL Token program"]:::xprog
+  N1["No revoke on-chain: the delegate is shared, so a revoke would lapse<br/>the subscriber's other subscriptions. Held charges still run to their own terminal state."]:::note
+  U -.- N1

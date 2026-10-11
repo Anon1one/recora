@@ -1,0 +1,42 @@
+---
+title: "resolve_dispute: the resolver splits a disputed charge · REQ-14"
+config:
+  flowchart:
+    rankSpacing: 28
+    nodeSpacing: 30
+    wrappingWidth: 260
+---
+flowchart TD
+  classDef signer fill:#ffffff,stroke:#111,stroke-width:3px,color:#111
+  classDef benef fill:#ffffff,stroke:#555,stroke-width:1px,stroke-dasharray:2 2,color:#111
+  classDef billing fill:#fde7cf,stroke:#c46a00,stroke-width:2px,color:#111
+  classDef settle fill:#d9e8fb,stroke:#1f5fae,stroke-width:2px,color:#111
+  classDef admin fill:#e6e6e6,stroke:#555,stroke-width:2px,color:#111
+  classDef pda fill:#dcf3dc,stroke:#2e7d32,stroke-width:2px,stroke-dasharray:6 3,color:#111
+  classDef tok fill:#fff6c2,stroke:#9a7b00,stroke-width:1.5px,color:#111
+  classDef xprog fill:#ece3fa,stroke:#6a3fb5,stroke-width:2px,color:#111
+  classDef err fill:#fde2e2,stroke:#b00020,stroke-width:2px,color:#111
+  classDef note fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#333
+  classDef ext fill:#ffffff,stroke:#555,stroke-width:1.5px,color:#111
+  classDef road fill:#ffffff,stroke:#999,stroke-width:1px,stroke-dasharray:8 4,color:#666
+
+
+  R(["Resolver<br/>signer"]):::signer -->|"resolve_dispute(merchant_bps) · REQ-14"| IX["resolve_dispute"]:::settle
+  IX --> D1{"signer == subscription.resolver (snapshot)?"}
+  D1 -- no --> E1["Error: Unauthorized"]:::err
+  D1 -- yes --> D2{"charge.state == Disputed?"}
+  D2 -- no --> E2["Error: InvalidState"]:::err
+  D2 -- yes --> D3{"merchant_bps ≤ 10 000?"}
+  D3 -- no --> E3["Error: InvalidSplit"]:::err
+  D3 -- yes --> M1["resolver_fee = amount × resolver_fee_bps / 10 000<br/>pot = amount − resolver_fee<br/>merchant_gross = pot × merchant_bps / 10 000<br/>protocol_fee = merchant_gross × fee_bps / 10 000<br/>merchant_net = merchant_gross − protocol_fee<br/>subscriber_share = pot − merchant_gross<br/>require sum == amount (u128 maths, floor, remainder to subscriber)"]:::settle
+  M1 --> P["up to 4 × transfer_checked from the Vault<br/>signer: Subscription PDA"]:::settle
+  P --> S["state = Resolved · merchant.total_revenue += merchant_net<br/>held_total −= amount · open_charges −= 1<br/>close Charge → rent_payer · emit DisputeResolved(split)"]:::pda
+  P -.->|"CPI"| SPL["SPL Token program"]:::xprog
+  P ==>|"subscriber_share"| SATA["Subscriber USDC ATA<br/>beneficiary"]:::benef
+  P ==>|"merchant_net"| MATA["Merchant payout ATA<br/>beneficiary"]:::benef
+  P ==>|"resolver_fee"| RATA["Resolver USDC ATA<br/>beneficiary"]:::benef
+  P ==>|"protocol_fee"| TRE["Fee treasury PDA"]:::pda
+  N1["The resolver picks the ratio, never the addresses: every destination is a stored pubkey."]:::note
+  N2["Known limit (from the Recourse LOI): resolver ≠ merchant does not stop a second wallet<br/>the merchant owns. The resolver is public before subscribe; that is the only defence."]:::note
+  M1 -.- N1
+  D1 -.- N2

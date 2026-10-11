@@ -4,6 +4,48 @@ A production-grade, non-custodial recurring pull-payment and escrow protocol on 
 
 ---
 
+## Devnet Deployment
+
+The program is live on devnet:
+
+- Program ID: [`ByzDYmPuV1FK7Z4RMGLgnqELFLZf3u2GoRSsB9bTndiu`](https://explorer.solana.com/address/ByzDYmPuV1FK7Z4RMGLgnqELFLZf3u2GoRSsB9bTndiu?cluster=devnet)
+- ProgramData account: `7bneD4cPtzYsxkL5PKMABwYU8g7zcR2yiqXq5FPN3HnU` (upgradeable loader)
+
+You don't have to trust us on this, it's one command:
+```bash
+solana program show ByzDYmPuV1FK7Z4RMGLgnqELFLZf3u2GoRSsB9bTndiu --url devnet
+```
+
+### Tests on devnet
+
+Here's the devnet suite passing against that program:
+
+![Devnet tests passing against the deployed program](docs/images/devnet-tests.png)
+
+It's all one subscription of three cycles, and each cycle ends a different way:
+
+| Test | REQs |
+| :--- | :--- |
+| Config on devnet is set up within its bounds | 01 |
+| Merchant, plan (with a resolver who isn't the merchant), subscribe + delegate approval | 04, 05, 06, 07 |
+| Cycle 0: billed into escrow, settled once the review window passes | 08, 11 |
+| Cycle 1: subscriber disputes and posts a bond, merchant contests, resolver splits it 70/30 | 10, 10b, 14 |
+| Cycle 2: billed, then the merchant refunds it | 13 |
+| No cycles left: the next billing attempt lapses the subscription | 09 |
+| Cancel the lapsed subscription, then close it | 15, 16 |
+
+Every step checks the balances it should have moved, not just that the transaction went through. Leftover tokens and SOL go back to the wallet at the end, so you can run it as many times as you like. A run takes about two minutes, most of it waiting out the 60 second review window on chain time.
+
+What's not on devnet: the admin instructions (config updates, authority transfer, `withdraw_fees`) need the config authority's key, and the timeout refunds need a 5 minute wait each. Those are covered by the local suites below.
+
+```bash
+DEVNET_RPC_URL=https://api.devnet.solana.com ANCHOR_WALLET=~/.config/solana/id.json pnpm test:devnet
+```
+
+One thing we ran into: with a Helius devnet URL, the suite sometimes failed right after `subscribe`, saying the subscription account didn't exist. The transaction had gone through fine. Some Helius nodes were just a bit behind and hadn't seen the new account yet. The public devnet RPC didn't have this problem, so that's what the command above uses. More options are under [Run Tests](#3-run-tests).
+
+---
+
 ## Application: Next.js, Neon, and Helius
 
 The wallet-based console in `apps/web` supports merchants, subscribers, resolvers, and administrators. Next.js serves the read API, unsigned transaction builders, Helius devnet receiver, and durable Postgres jobs. The existing generated client supplies protocol codecs and builders; the keeper still performs billing and settlement.
@@ -48,6 +90,30 @@ flowchart TD
     ResolverSigner -->|"REQ-14 (Ruling Split)"| Charge
     SubSigner -->|"REQ-15/16 (Cancel/Close)"| Sub
 ```
+
+### The full set of diagrams
+
+The chart above is the short version. The full design lives in [`arch/`](arch/README.md), and it's the one we actually worked from. It has a legend, the overview, every account and PDA with its seeds, the state machines, who the actors are, one flow per instruction (error paths included), and an end-to-end picture with the keeper, indexer and database. Each one is a Mermaid file in `arch/diagrams/` with a rendered PNG next to it in `arch/png/`.
+
+The four you'll probably want first:
+
+**Overview**
+
+![Protocol overview](arch/png/01-overview.png)
+
+**Accounts and PDAs**
+
+![Accounts and PDAs](arch/png/02-accounts.png)
+
+**Subscription and Charge states**
+
+![State machines](arch/png/03-states.png)
+
+**End to end**
+
+![End to end](arch/png/30-end-to-end.png)
+
+And one per instruction: [initialize_config](arch/png/10-initialize-config.png) · [update_config](arch/png/11-update-config.png) · [withdraw_fees](arch/png/12-withdraw-fees.png) · [initialize_merchant](arch/png/13-initialize-merchant.png) · [create_plan](arch/png/14-create-plan.png) · [subscribe](arch/png/15-subscribe.png) · [process_billing](arch/png/16-process-billing.png) · [dispute_charge](arch/png/17-dispute-charge.png) · [settle_charge](arch/png/18-settle-charge.png) · [refund_charge](arch/png/19-refund-charge.png) · [resolve_dispute](arch/png/20-resolve-dispute.png) · [cancel_subscription](arch/png/21-cancel-subscription.png) · [close_subscription](arch/png/22-close-subscription.png). Plus the [actors](arch/png/04-actors.png) and the [legend](arch/png/00-legend.png).
 
 ---
 
@@ -149,11 +215,11 @@ ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 ANCHOR_WALLET=~/.config/solana/id.json
 ```
 The wallet must be the upgrade authority passed to the validator, because `initialize_config` checks it. The keeper smoke test runs after `test:ts` (it reuses the config), sets short windows and takes about a minute.
 
-**TypeScript (devnet happy path):**
+**TypeScript (devnet):**
 ```bash
 DEVNET_RPC_URL=<devnet rpc url> ANCHOR_WALLET=~/.config/solana/id.json pnpm test:devnet
 ```
-Runs merchant, plan, subscribe, two bill-and-settle cycles, cancel and close against the deployed program, then returns the leftover tokens and SOL to the wallet. All RPC calls share one paced queue (`DEVNET_RPC_GAP_MS`, default 400 ms) with backoff on 429/503, and transactions are confirmed by polling. The wallet must hold at least 2 tokens of `Config.mint`. `DEVNET_RPC_URL` can also be set in a gitignored `.env.devnet`.
+Runs `tests/recora.devnet.ts` against the deployed program: config check, merchant, plan, subscribe, then three cycles that end in a settle, a contested dispute the resolver splits, and a merchant refund, then a lapse, cancel and close (see [Tests on devnet](#tests-on-devnet)). It returns the leftover tokens and SOL to the wallet at the end. All RPC calls share one paced queue (`DEVNET_RPC_GAP_MS`, default 400 ms) with backoff on 429/503, and transactions are confirmed by polling. The wallet must hold at least 3.02 tokens of `Config.mint` (three cycles plus two dispute bonds). `DEVNET_RPC_URL` can also be set in a gitignored `.env.devnet`.
 
 ### 4. Run Autonomous Keeper Daemon
 ```bash

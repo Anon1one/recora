@@ -1,0 +1,36 @@
+---
+title: "close_subscription · REQ-16"
+config:
+  flowchart:
+    rankSpacing: 28
+    nodeSpacing: 30
+    wrappingWidth: 260
+---
+flowchart TD
+  classDef signer fill:#ffffff,stroke:#111,stroke-width:3px,color:#111
+  classDef benef fill:#ffffff,stroke:#555,stroke-width:1px,stroke-dasharray:2 2,color:#111
+  classDef billing fill:#fde7cf,stroke:#c46a00,stroke-width:2px,color:#111
+  classDef settle fill:#d9e8fb,stroke:#1f5fae,stroke-width:2px,color:#111
+  classDef admin fill:#e6e6e6,stroke:#555,stroke-width:2px,color:#111
+  classDef pda fill:#dcf3dc,stroke:#2e7d32,stroke-width:2px,stroke-dasharray:6 3,color:#111
+  classDef tok fill:#fff6c2,stroke:#9a7b00,stroke-width:1.5px,color:#111
+  classDef xprog fill:#ece3fa,stroke:#6a3fb5,stroke-width:2px,color:#111
+  classDef err fill:#fde2e2,stroke:#b00020,stroke-width:2px,color:#111
+  classDef note fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#333
+  classDef ext fill:#ffffff,stroke:#555,stroke-width:1.5px,color:#111
+  classDef road fill:#ffffff,stroke:#999,stroke-width:1px,stroke-dasharray:8 4,color:#666
+
+
+  S(["Subscriber<br/>signer, rent recipient"]):::signer -->|"close_subscription · REQ-16"| IX["close_subscription"]:::billing
+  IX --> D0{"signer == subscription.subscriber?"}
+  D0 -- no --> E0["Error: Unauthorized"]:::err
+  D0 -- yes --> D1{"status ∈ {Cancelled, Lapsed}?"}
+  D1 -- no --> E1["Error: StillActive"]:::err
+  D1 -- yes --> D2{"open_charges == 0?"}
+  D2 -- no --> E2["Error: ChargesOutstanding"]:::err
+  D2 -- yes --> P["transfer_checked Vault → Subscriber ATA: vault.amount (dust residual, normally 0)<br/>close_account Vault → rent to subscriber<br/>close Subscription PDA → rent to subscriber"]:::billing
+  P --> EV["emit SubscriptionClosed"]:::pda
+  P -.->|"CPI"| SPL["SPL Token program"]:::xprog
+  P ==>|"residual"| SATA["Subscriber USDC ATA<br/>beneficiary"]:::benef
+  N1["Reading the live vault balance and sweeping it before close_account<br/>means dust sent into the vault can never brick the close."]:::note
+  P -.- N1

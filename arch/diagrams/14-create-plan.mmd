@@ -1,0 +1,37 @@
+---
+title: "create_plan · REQ-05"
+config:
+  flowchart:
+    rankSpacing: 28
+    nodeSpacing: 30
+    wrappingWidth: 260
+---
+flowchart TD
+  classDef signer fill:#ffffff,stroke:#111,stroke-width:3px,color:#111
+  classDef benef fill:#ffffff,stroke:#555,stroke-width:1px,stroke-dasharray:2 2,color:#111
+  classDef billing fill:#fde7cf,stroke:#c46a00,stroke-width:2px,color:#111
+  classDef settle fill:#d9e8fb,stroke:#1f5fae,stroke-width:2px,color:#111
+  classDef admin fill:#e6e6e6,stroke:#555,stroke-width:2px,color:#111
+  classDef pda fill:#dcf3dc,stroke:#2e7d32,stroke-width:2px,stroke-dasharray:6 3,color:#111
+  classDef tok fill:#fff6c2,stroke:#9a7b00,stroke-width:1.5px,color:#111
+  classDef xprog fill:#ece3fa,stroke:#6a3fb5,stroke-width:2px,color:#111
+  classDef err fill:#fde2e2,stroke:#b00020,stroke-width:2px,color:#111
+  classDef note fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#333
+  classDef ext fill:#ffffff,stroke:#555,stroke-width:1.5px,color:#111
+  classDef road fill:#ffffff,stroke:#999,stroke-width:1px,stroke-dasharray:8 4,color:#666
+
+
+  M(["Merchant<br/>signer, pays rent"]):::signer -->|"create_plan · REQ-05"| IX["create_plan"]:::billing
+  IX --> D0{"config.paused?"}
+  D0 -- yes --> E0["Error: ProtocolPaused"]:::err
+  D0 -- no --> D1{"price > 0,<br/>min_interval ≤ interval_secs ≤ max_interval,<br/>min_review ≤ review_secs ≤ max_review?"}
+  D1 -- no --> E1["Error: InvalidTerms"]:::err
+  D1 -- yes --> D2{"resolver ≠ merchant and<br/>resolver_fee_bps ≤ config.max_resolver_fee_bps?"}
+  D2 -- no --> E2["Error: InvalidResolver"]:::err
+  D2 -- yes --> C1["init Plan PDA<br/>seeds: plan, merchant_authority, plan_id = merchant.plan_count<br/>mint = USDC, price, interval, review, resolver"]:::pda
+  C1 --> U1["merchant.plan_count += 1<br/>emit PlanCreated"]:::billing
+  C1 -.->|"CPI"| SYS["System program"]:::xprog
+  N1["The review window is bounded by Config: an unlimited window<br/>would mean the merchant's money is never final."]:::note
+  N2["The resolver is public before anyone subscribes."]:::note
+  D1 -.- N1
+  D2 -.- N2

@@ -1,0 +1,33 @@
+---
+title: "initialize_merchant · REQ-04"
+config:
+  flowchart:
+    rankSpacing: 28
+    nodeSpacing: 30
+    wrappingWidth: 260
+---
+flowchart TD
+  classDef signer fill:#ffffff,stroke:#111,stroke-width:3px,color:#111
+  classDef benef fill:#ffffff,stroke:#555,stroke-width:1px,stroke-dasharray:2 2,color:#111
+  classDef billing fill:#fde7cf,stroke:#c46a00,stroke-width:2px,color:#111
+  classDef settle fill:#d9e8fb,stroke:#1f5fae,stroke-width:2px,color:#111
+  classDef admin fill:#e6e6e6,stroke:#555,stroke-width:2px,color:#111
+  classDef pda fill:#dcf3dc,stroke:#2e7d32,stroke-width:2px,stroke-dasharray:6 3,color:#111
+  classDef tok fill:#fff6c2,stroke:#9a7b00,stroke-width:1.5px,color:#111
+  classDef xprog fill:#ece3fa,stroke:#6a3fb5,stroke-width:2px,color:#111
+  classDef err fill:#fde2e2,stroke:#b00020,stroke-width:2px,color:#111
+  classDef note fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#333
+  classDef ext fill:#ffffff,stroke:#555,stroke-width:1.5px,color:#111
+  classDef road fill:#ffffff,stroke:#999,stroke-width:1px,stroke-dasharray:8 4,color:#666
+
+
+  M(["Merchant<br/>signer, pays rent"]):::signer -->|"initialize_merchant · REQ-04"| IX["initialize_merchant"]:::billing
+  IX --> D1{"payout_ata == canonical USDC ATA<br/>of the merchant wallet?"}
+  D1 -- no --> E1["Error: WrongTokenAccount"]:::err
+  D1 -- yes --> D2{"Merchant PDA already exists?"}
+  D2 -- yes --> E2["Error: AlreadyInitialized (Anchor init)"]:::err
+  D2 -- no --> C1["init Merchant PDA<br/>seeds: merchant, merchant_authority<br/>payout_ata stored, plan_count = 0, total_revenue = 0"]:::pda
+  C1 --> EV["emit MerchantInitialized"]:::pda
+  C1 -.->|"CPI"| SYS["System program"]:::xprog
+  N1["Canonical ATA: if the merchant ever closes it,<br/>anyone can recreate the same address, so settlements cannot get stuck."]:::note
+  D1 -.- N1

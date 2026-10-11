@@ -1,0 +1,42 @@
+---
+title: "dispute_charge: the refund button · REQ-10"
+config:
+  flowchart:
+    rankSpacing: 28
+    nodeSpacing: 30
+    wrappingWidth: 260
+---
+flowchart TD
+  classDef signer fill:#ffffff,stroke:#111,stroke-width:3px,color:#111
+  classDef benef fill:#ffffff,stroke:#555,stroke-width:1px,stroke-dasharray:2 2,color:#111
+  classDef billing fill:#fde7cf,stroke:#c46a00,stroke-width:2px,color:#111
+  classDef settle fill:#d9e8fb,stroke:#1f5fae,stroke-width:2px,color:#111
+  classDef admin fill:#e6e6e6,stroke:#555,stroke-width:2px,color:#111
+  classDef pda fill:#dcf3dc,stroke:#2e7d32,stroke-width:2px,stroke-dasharray:6 3,color:#111
+  classDef tok fill:#fff6c2,stroke:#9a7b00,stroke-width:1.5px,color:#111
+  classDef xprog fill:#ece3fa,stroke:#6a3fb5,stroke-width:2px,color:#111
+  classDef err fill:#fde2e2,stroke:#b00020,stroke-width:2px,color:#111
+  classDef note fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#333
+  classDef ext fill:#ffffff,stroke:#555,stroke-width:1.5px,color:#111
+  classDef road fill:#ffffff,stroke:#999,stroke-width:1px,stroke-dasharray:8 4,color:#666
+
+
+  EV@{ shape: cloud, label: "Evidence store (off-chain)<br/>only the hash goes on-chain" }
+  S(["Subscriber<br/>signer"]):::signer
+  EV -. "evidence_ref = sha256(evidence)" .-> S
+  S -->|"dispute_charge(evidence_ref) · REQ-10"| IX["dispute_charge"]:::settle
+  IX --> D1{"signer == subscription.subscriber?"}
+  D1 -- no --> E1["Error: Unauthorized"]:::err
+  D1 -- yes --> D2{"charge.state == Held?"}
+  D2 -- no --> E2["Error: InvalidState"]:::err
+  D2 -- yes --> D3{"now < pulled_at + review_secs (snapshot)?"}
+  D3 -- no --> E3["Error: ReviewWindowElapsed"]:::err
+  D3 -- yes --> U1["Charge PDA: state = Disputed<br/>dispute_opened_at = now, evidence_ref stored<br/>emit ChargeDisputed"]:::pda
+  U1 --> X{"which exit comes next?"}
+  X -->|"merchant concedes"| R1["refund_charge · REQ-13"]:::settle
+  X -->|"resolver rules"| R2["resolve_dispute · REQ-14"]:::settle
+  X -->|"nobody acts within dispute_secs"| R3["settle_charge timeout · REQ-12"]:::settle
+  N1["No funds move here; the charge stays in the vault."]:::note
+  N2["Every exit is reachable without the other side cooperating,<br/>so Disputed can never trap funds."]:::note
+  U1 -.- N1
+  X -.- N2

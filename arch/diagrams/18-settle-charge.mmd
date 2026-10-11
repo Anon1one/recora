@@ -1,0 +1,52 @@
+---
+title: "settle_charge: permissionless crank · REQ-11, REQ-12"
+config:
+  flowchart:
+    rankSpacing: 28
+    nodeSpacing: 30
+    wrappingWidth: 260
+---
+flowchart TD
+  classDef signer fill:#ffffff,stroke:#111,stroke-width:3px,color:#111
+  classDef benef fill:#ffffff,stroke:#555,stroke-width:1px,stroke-dasharray:2 2,color:#111
+  classDef billing fill:#fde7cf,stroke:#c46a00,stroke-width:2px,color:#111
+  classDef settle fill:#d9e8fb,stroke:#1f5fae,stroke-width:2px,color:#111
+  classDef admin fill:#e6e6e6,stroke:#555,stroke-width:2px,color:#111
+  classDef pda fill:#dcf3dc,stroke:#2e7d32,stroke-width:2px,stroke-dasharray:6 3,color:#111
+  classDef tok fill:#fff6c2,stroke:#9a7b00,stroke-width:1.5px,color:#111
+  classDef xprog fill:#ece3fa,stroke:#6a3fb5,stroke-width:2px,color:#111
+  classDef err fill:#fde2e2,stroke:#b00020,stroke-width:2px,color:#111
+  classDef note fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#333
+  classDef ext fill:#ffffff,stroke:#555,stroke-width:1.5px,color:#111
+  classDef road fill:#ffffff,stroke:#999,stroke-width:1px,stroke-dasharray:8 4,color:#666
+
+
+  BOT@{ shape: cloud, label: "Keeper bot, or the merchant<br/>who wants to be paid" }
+  K(["Caller: anyone<br/>signer, no authority"]):::signer
+  BOT --> K
+  K -->|"settle_charge"| IX["settle_charge"]:::settle
+  IX --> D0{"accounts match stored keys?<br/>merchant_ata == merchant.payout_ata<br/>treasury == config.fee_treasury<br/>subscriber_ata == canonical ATA of subscriber<br/>rent_payer == charge.rent_payer"}
+  D0 -- no --> E0["Error: WrongAccount"]:::err
+  D0 -- yes --> D1{"charge.state?"}
+  D1 -- "Settled / Refunded / Resolved" --> E1["Error: InvalidState"]:::err
+  D1 -- Held --> D2{"now ≥ pulled_at + review_secs?"}
+  D2 -- no --> E2["Error: ReviewWindowNotElapsed"]:::err
+  D2 -- "yes · REQ-11" --> P1["fee = amount × fee_bps / 10 000 (u128, floor)<br/>transfer_checked Vault → Merchant ATA: amount − fee<br/>transfer_checked Vault → Treasury: fee<br/>signer: Subscription PDA"]:::settle
+  P1 --> S1["state = Settled · merchant.total_revenue += amount − fee<br/>emit ChargeSettled"]:::pda
+  D1 -- Disputed --> D3{"now ≥ dispute_opened_at + dispute_secs?"}
+  D3 -- no --> E3["Error: DisputeNotTimedOut"]:::err
+  D3 -- "yes · REQ-12" --> P2["transfer_checked Vault → Subscriber ATA: full amount<br/>no protocol fee"]:::settle
+  P2 --> S2["state = Refunded<br/>emit ChargeRefundedAfterTimeout"]:::pda
+  S1 --> C["held_total −= amount · open_charges −= 1<br/>close Charge PDA → rent to charge.rent_payer"]:::settle
+  S2 --> C
+  P1 -.->|"CPI"| SPL["SPL Token program"]:::xprog
+  P2 -.->|"CPI"| SPL
+  P1 ==>|"amount − fee"| MATA["Merchant payout ATA<br/>beneficiary"]:::benef
+  P1 ==>|"fee"| TRE["Fee treasury PDA"]:::pda
+  P2 ==>|"amount"| SATA["Subscriber USDC ATA<br/>beneficiary"]:::benef
+  N1["A dispute timeout refunds the subscriber. The merchant picked the resolver,<br/>so inaction costs the merchant: the auto-return default from the Recourse LOI."]:::note
+  N2["Boundary pinned: dispute needs now < deadline, settle needs now ≥ deadline,<br/>so there is no same-slot tie."]:::note
+  N3["Separate events for 'nobody disputed' and 'dispute abandoned':<br/>opposite signals, so the indexer must be able to tell them apart."]:::note
+  S2 -.- N1
+  D2 -.- N2
+  S1 -.- N3

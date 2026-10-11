@@ -1,0 +1,34 @@
+---
+title: "refund_charge: the merchant gives the money back · REQ-13"
+config:
+  flowchart:
+    rankSpacing: 28
+    nodeSpacing: 30
+    wrappingWidth: 260
+---
+flowchart TD
+  classDef signer fill:#ffffff,stroke:#111,stroke-width:3px,color:#111
+  classDef benef fill:#ffffff,stroke:#555,stroke-width:1px,stroke-dasharray:2 2,color:#111
+  classDef billing fill:#fde7cf,stroke:#c46a00,stroke-width:2px,color:#111
+  classDef settle fill:#d9e8fb,stroke:#1f5fae,stroke-width:2px,color:#111
+  classDef admin fill:#e6e6e6,stroke:#555,stroke-width:2px,color:#111
+  classDef pda fill:#dcf3dc,stroke:#2e7d32,stroke-width:2px,stroke-dasharray:6 3,color:#111
+  classDef tok fill:#fff6c2,stroke:#9a7b00,stroke-width:1.5px,color:#111
+  classDef xprog fill:#ece3fa,stroke:#6a3fb5,stroke-width:2px,color:#111
+  classDef err fill:#fde2e2,stroke:#b00020,stroke-width:2px,color:#111
+  classDef note fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#333
+  classDef ext fill:#ffffff,stroke:#555,stroke-width:1.5px,color:#111
+  classDef road fill:#ffffff,stroke:#999,stroke-width:1px,stroke-dasharray:8 4,color:#666
+
+
+  M(["Merchant<br/>signer"]):::signer -->|"refund_charge · REQ-13"| IX["refund_charge"]:::settle
+  IX --> D1{"signer == merchant.authority of this subscription,<br/>subscriber_ata == canonical ATA of subscription.subscriber?"}
+  D1 -- no --> E1["Error: Unauthorized / WrongTokenAccount"]:::err
+  D1 -- yes --> D2{"charge.state ∈ {Held, Disputed}?"}
+  D2 -- no --> E2["Error: InvalidState"]:::err
+  D2 -- yes --> P["transfer_checked Vault → Subscriber ATA: full amount, no fee<br/>signer: Subscription PDA"]:::settle
+  P --> S["state = Refunded · held_total −= amount · open_charges −= 1<br/>close Charge → rent to rent_payer · emit ChargeRefunded"]:::pda
+  P -.->|"CPI"| SPL["SPL Token program"]:::xprog
+  P ==>|"amount"| SATA["Subscriber USDC ATA<br/>beneficiary"]:::benef
+  N1["Allowed from two states with no time limit: a merchant giving money back<br/>can only hurt the merchant, so this path is always safe (like release in the Recourse LOI)."]:::note
+  S -.- N1

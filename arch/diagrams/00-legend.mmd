@@ -1,0 +1,45 @@
+---
+title: "Legend (applies to every diagram)"
+config:
+  flowchart:
+    wrappingWidth: 220
+---
+flowchart LR
+  classDef signer fill:#ffffff,stroke:#111,stroke-width:3px,color:#111
+  classDef benef fill:#ffffff,stroke:#555,stroke-width:1px,stroke-dasharray:2 2,color:#111
+  classDef billing fill:#fde7cf,stroke:#c46a00,stroke-width:2px,color:#111
+  classDef settle fill:#d9e8fb,stroke:#1f5fae,stroke-width:2px,color:#111
+  classDef admin fill:#e6e6e6,stroke:#555,stroke-width:2px,color:#111
+  classDef pda fill:#dcf3dc,stroke:#2e7d32,stroke-width:2px,stroke-dasharray:6 3,color:#111
+  classDef tok fill:#fff6c2,stroke:#9a7b00,stroke-width:1.5px,color:#111
+  classDef xprog fill:#ece3fa,stroke:#6a3fb5,stroke-width:2px,color:#111
+  classDef err fill:#fde2e2,stroke:#b00020,stroke-width:2px,color:#111
+  classDef note fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#333
+  classDef ext fill:#ffffff,stroke:#555,stroke-width:1.5px,color:#111
+  classDef road fill:#ffffff,stroke:#999,stroke-width:1px,stroke-dasharray:8 4,color:#666
+
+
+  subgraph NODES["Node styles"]
+    direction TB
+    L1(["Signer: signs the instruction"]):::signer
+    L2["Beneficiary: receives funds, does not sign"]:::benef
+    L3["Billing instruction (recora program)"]:::billing
+    L4["Settlement instruction (recora program)"]:::settle
+    L5["Admin instruction (recora program)"]:::admin
+    L6["PDA: seeds written inside the box"]:::pda
+    L7["SPL token account that is not a PDA (ATA)"]:::tok
+    L8["External on-chain program (SPL Token, System)"]:::xprog
+    L9@{ shape: cloud, label: "Off-chain service" }
+    L10[("Database")]
+    L11{"Decision: both branches drawn"}
+    L12["Error path: transaction fails"]:::err
+    L13["Side note: what the step does to state"]:::note
+    L14["Roadmap context, not in the POC"]:::road
+  end
+  subgraph EDGES["Arrow styles"]
+    direction TB
+    A1([" "]):::signer -->|"thin: instruction call, or control flow"| A2[" "]
+    B1[" "] ==>|"thick: token movement via SPL transfer_checked CPI"| B2[" "]
+    C1[" "] -.->|"dotted: CPI with no token movement, or a reference"| C2[" "]
+  end
+  N1["REQ-xx next to an arrow or branch = the requirement that path fulfils.<br/>There is no oracle anywhere, so no hexagon is used: time comes from the Clock sysvar."]:::note

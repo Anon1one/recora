@@ -1,0 +1,46 @@
+---
+title: "update_config: five single-purpose instructions · REQ-02"
+config:
+  flowchart:
+    rankSpacing: 28
+    nodeSpacing: 30
+    wrappingWidth: 260
+---
+flowchart TD
+  classDef signer fill:#ffffff,stroke:#111,stroke-width:3px,color:#111
+  classDef benef fill:#ffffff,stroke:#555,stroke-width:1px,stroke-dasharray:2 2,color:#111
+  classDef billing fill:#fde7cf,stroke:#c46a00,stroke-width:2px,color:#111
+  classDef settle fill:#d9e8fb,stroke:#1f5fae,stroke-width:2px,color:#111
+  classDef admin fill:#e6e6e6,stroke:#555,stroke-width:2px,color:#111
+  classDef pda fill:#dcf3dc,stroke:#2e7d32,stroke-width:2px,stroke-dasharray:6 3,color:#111
+  classDef tok fill:#fff6c2,stroke:#9a7b00,stroke-width:1.5px,color:#111
+  classDef xprog fill:#ece3fa,stroke:#6a3fb5,stroke-width:2px,color:#111
+  classDef err fill:#fde2e2,stroke:#b00020,stroke-width:2px,color:#111
+  classDef note fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#333
+  classDef ext fill:#ffffff,stroke:#555,stroke-width:1.5px,color:#111
+  classDef road fill:#ffffff,stroke:#999,stroke-width:1px,stroke-dasharray:8 4,color:#666
+
+
+  A(["Protocol admin<br/>signer"]):::signer --> D0{"signer == config.authority?<br/>(accept_authority: == pending_authority)"}
+  D0 -- no --> E0["Error: Unauthorized"]:::err
+  D0 -- yes --> W{"which instruction?"}
+  W -->|"set_fee"| F1{"fee_bps ≤ 100?"}
+  F1 -- no --> FE["Error: FeeTooHigh"]:::err
+  F1 -- yes --> FU["config.fee_bps = new"]:::admin
+  W -->|"set_paused"| PU["config.paused = flag"]:::admin
+  W -->|"set_windows"| W1{"min ≤ max for every bound?"}
+  W1 -- no --> WE["Error: InvalidWindowBounds"]:::err
+  W1 -- yes --> WU["config windows and dispute_secs = new"]:::admin
+  W -->|"propose_authority"| AU1["config.pending_authority = new"]:::admin
+  W -->|"accept_authority"| AU2["config.authority = pending<br/>pending = default"]:::admin
+  FU --> EV["emit ConfigUpdated"]:::pda
+  PU --> EV
+  WU --> EV
+  AU1 --> EV
+  AU2 --> EV
+  N1["Nothing in flight is affected: price, fee, windows and dispute_secs<br/>are snapshotted into each Subscription at subscribe."]:::note
+  N2["Pause blocks create_plan and subscribe only.<br/>Live subscriptions keep billing and every charge reaches a terminal state."]:::note
+  N3["Two-step handover, so one typo cannot strand the treasury."]:::note
+  WU -.- N1
+  PU -.- N2
+  AU2 -.- N3

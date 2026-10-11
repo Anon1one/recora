@@ -1,0 +1,51 @@
+---
+title: "process_billing: permissionless crank · REQ-08, REQ-09"
+config:
+  flowchart:
+    rankSpacing: 28
+    nodeSpacing: 30
+    wrappingWidth: 260
+---
+flowchart TD
+  classDef signer fill:#ffffff,stroke:#111,stroke-width:3px,color:#111
+  classDef benef fill:#ffffff,stroke:#555,stroke-width:1px,stroke-dasharray:2 2,color:#111
+  classDef billing fill:#fde7cf,stroke:#c46a00,stroke-width:2px,color:#111
+  classDef settle fill:#d9e8fb,stroke:#1f5fae,stroke-width:2px,color:#111
+  classDef admin fill:#e6e6e6,stroke:#555,stroke-width:2px,color:#111
+  classDef pda fill:#dcf3dc,stroke:#2e7d32,stroke-width:2px,stroke-dasharray:6 3,color:#111
+  classDef tok fill:#fff6c2,stroke:#9a7b00,stroke-width:1.5px,color:#111
+  classDef xprog fill:#ece3fa,stroke:#6a3fb5,stroke-width:2px,color:#111
+  classDef err fill:#fde2e2,stroke:#b00020,stroke-width:2px,color:#111
+  classDef note fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#333
+  classDef ext fill:#ffffff,stroke:#555,stroke-width:1.5px,color:#111
+  classDef road fill:#ffffff,stroke:#999,stroke-width:1px,stroke-dasharray:8 4,color:#666
+
+
+  BOT@{ shape: cloud, label: "Keeper bot<br/>(merchant-run cron,<br/>replaceable by anyone)" }
+  K(["Caller: anyone<br/>signer, pays Charge rent"]):::signer
+  BOT --> K
+  K -->|"process_billing"| IX["process_billing"]:::billing
+  IX --> D1{"subscription.status == Active?"}
+  D1 -- no --> E1["Error: SubscriptionNotActive"]:::err
+  D1 -- yes --> D2{"now ≥ next_billing_ts?"}
+  D2 -- no --> E2["Error: NotDue"]:::err
+  D2 -- yes --> D0{"subscriber_ata == canonical USDC ATA of subscription.subscriber?<br/>vault == PDA(vault, subscription)?"}
+  D0 -- no --> E0["Error: WrongTokenAccount"]:::err
+  D0 -- yes --> D3{"subscriber ATA: delegate == Delegate PDA,<br/>delegated_amount ≥ price,<br/>amount ≥ price, not frozen?"}
+  D3 -- "no · REQ-09" --> L1["status = Lapsed · plan.subs_count −= 1<br/>emit SubscriptionLapsed<br/>NO transfer; the tx succeeds"]:::billing
+  D3 -- "yes · REQ-08" --> T1["transfer_checked CPI<br/>subscriber ATA → Vault PDA<br/>amount = subscription.price (snapshot)<br/>authority: Delegate PDA (signs with seeds)"]:::billing
+  T1 --> C1["init Charge PDA · seeds: charge, subscription, cycle<br/>state = Held, pulled_at = now, rent_payer = caller"]:::pda
+  C1 --> U1["cycle += 1 · next_billing_ts += interval_secs<br/>open_charges += 1 · held_total += price<br/>emit ChargePulled"]:::billing
+  T1 -.->|"CPI"| SPL["SPL Token program"]:::xprog
+  C1 -.->|"CPI"| SYS["System program"]:::xprog
+  SATA["Subscriber USDC ATA"]:::tok ==>|"price"| VAULT["Vault PDA · vault, subscription"]:::pda
+  SPL -.- SATA
+
+  N1["In the SubStack LOI design a failed pull would revert the whole tx, so Lapsed would be unreachable.<br/>Balance and allowance are now checked before the CPI."]:::note
+  N2["The program, not the allowance, limits each subscription to one price per interval."]:::note
+  N4["Critical check: the Delegate PDA is the delegate on EVERY subscriber's ATA,<br/>so without pinning the ATA to subscription.subscriber a caller could bill<br/>subscription A from subscriber B's wallet."]:::note
+  D0 -.- N4
+  N3["Late keeper: one cycle per call, so repeated calls catch up."]:::note
+  L1 -.- N1
+  T1 -.- N2
+  U1 -.- N3

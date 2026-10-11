@@ -1,5 +1,10 @@
-// Happy path against the deployed program on devnet: merchant -> plan ->
-// subscribe -> bill -> settle (two cycles) -> cancel -> close.
+// The main flows against the deployed program on devnet, on one subscription of
+// three cycles:
+//   config check -> merchant -> plan -> subscribe
+//   cycle 0: bill -> settle after review
+//   cycle 1: bill -> dispute -> contest -> resolver splits it 70/30
+//   cycle 2: bill -> merchant refunds it
+//   no cycles left: billing lapses the subscription -> cancel -> close
 //
 // Every RPC request goes through one paced queue (DEVNET_RPC_GAP_MS apart, 429/503
 // retried with backoff), and transactions are confirmed by polling, not websockets.
@@ -8,7 +13,7 @@
 //
 // DEVNET_RPC_URL may also live in a gitignored .env.devnet at the repo root. The
 // wallet pays fees and funds the test accounts, and must hold at least
-// PRICE * CYCLES of the config mint.
+// PRICE * CYCLES + 2 * BOND of the config mint.
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { resolve } from "path";
@@ -43,10 +48,14 @@ const GAP_MS = Number(process.env.DEVNET_RPC_GAP_MS || 400);
 const WALLET_PATH = (process.env.ANCHOR_WALLET || "~/.config/solana/id.json").replace(/^~/, homedir());
 
 const PRICE = new BN(1_000_000); // 1 token at 6 decimals
-const CYCLES = 2;
+const CYCLES = 3;
 const INTERVAL_SECS = 10;
-const REVIEW_SECS = 5;
+// Long enough to dispute a charge after it is pulled, through a paced RPC.
+const REVIEW_SECS = 60;
 const RESOLVER_FEE_BPS = 100;
+// The dispute bond equals the resolver fee on the charge; both sides post one.
+const BOND = (BigInt(PRICE.toString()) * BigInt(RESOLVER_FEE_BPS)) / 10_000n;
+const MERCHANT_BPS = 7000;
 const ACTOR_SOL = 0.03 * LAMPORTS_PER_SOL;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -85,7 +94,7 @@ function pacedFetch() {
 const seed = (s: string) => Buffer.from(s);
 const u64 = (n: BN | number) => new BN(n).toArrayLike(Buffer, "le", 8);
 
-describe("Recora happy path on devnet", function () {
+describe("Recora on devnet", function () {
   this.timeout(900_000);
 
   const connection = new Connection(RPC_URL, {
@@ -117,6 +126,7 @@ describe("Recora happy path on devnet", function () {
   let payerAta: PublicKey;
   let merchantAta: PublicKey;
   let subscriberAta: PublicKey;
+  let resolverAta: PublicKey;
 
   const balance = async (ata: PublicKey) => (await getAccount(connection, ata)).amount;
 
@@ -208,33 +218,50 @@ describe("Recora happy path on devnet", function () {
     feeBps = config.feeBps;
     expect(config.minIntervalSecs.toNumber()).to.be.at.most(INTERVAL_SECS);
     expect(config.minReviewSecs.toNumber()).to.be.at.most(REVIEW_SECS);
+    expect(config.maxReviewSecs.toNumber()).to.be.at.least(REVIEW_SECS);
     decimals = (await getMint(connection, mint)).decimals;
 
     payerAta = getAssociatedTokenAddressSync(mint, payer.publicKey);
     merchantAta = getAssociatedTokenAddressSync(mint, merchant.publicKey);
     subscriberAta = getAssociatedTokenAddressSync(mint, subscriber.publicKey);
+    resolverAta = getAssociatedTokenAddressSync(mint, resolver.publicKey);
 
-    const needed = BigInt(PRICE.toString()) * BigInt(CYCLES);
+    // The subscriber pays for every cycle plus one dispute bond; the merchant
+    // needs one bond to contest.
+    const needed = BigInt(PRICE.toString()) * BigInt(CYCLES) + 2n * BOND;
     const held = await balance(payerAta).catch(() => 0n);
     expect(held >= needed, `wallet ${payer.publicKey.toBase58()} holds ${held} of mint ${mint.toBase58()}, needs ${needed}; ask the mint authority for tokens`).to.equal(true);
     expect(await connection.getBalance(payer.publicKey)).to.be.greaterThan(3 * ACTOR_SOL);
 
-    // One transaction funds both actors, creates their token accounts and gives
-    // the subscriber exactly what the subscription will pull.
+    // One transaction funds the actors, creates their token accounts and gives
+    // each exactly what the flows below will move.
     await send(
       new Transaction().add(
         SystemProgram.transfer({ fromPubkey: payer.publicKey, toPubkey: merchant.publicKey, lamports: ACTOR_SOL }),
         SystemProgram.transfer({ fromPubkey: payer.publicKey, toPubkey: subscriber.publicKey, lamports: ACTOR_SOL }),
         createAssociatedTokenAccountIdempotentInstruction(payer.publicKey, merchantAta, merchant.publicKey, mint),
         createAssociatedTokenAccountIdempotentInstruction(payer.publicKey, subscriberAta, subscriber.publicKey, mint),
-        createTransferCheckedInstruction(payerAta, mint, subscriberAta, payer.publicKey, needed, decimals),
+        createAssociatedTokenAccountIdempotentInstruction(payer.publicKey, resolverAta, resolver.publicKey, mint),
+        createTransferCheckedInstruction(payerAta, mint, subscriberAta, payer.publicKey, needed - BOND, decimals),
+        createTransferCheckedInstruction(payerAta, mint, merchantAta, payer.publicKey, BOND, decimals),
       ),
       [payer],
       "fund actors",
     );
   });
 
-  it("initializes a merchant", async () => {
+  it("REQ-01: the deployed config is initialized within its bounds", async () => {
+    const config = await program.account.config.fetch(configPda);
+    expect(config.feeBps).to.be.at.most(100);
+    expect(config.maxResolverFeeBps).to.be.at.most(1000);
+    const tenYears = 10 * 365 * 24 * 3600;
+    for (const secs of [config.maxIntervalSecs, config.maxReviewSecs, config.disputeSecs])
+      expect(secs.toNumber()).to.be.at.most(tenYears);
+    expect((await connection.getAccountInfo(config.mint))?.owner.toBase58()).to.equal(TOKEN_PROGRAM_ID.toBase58());
+    expect((await getAccount(connection, treasury)).mint.toBase58()).to.equal(mint.toBase58());
+  });
+
+  it("REQ-04: initializes a merchant", async () => {
     const ix = await program.methods
       .initializeMerchant()
       .accounts({
@@ -253,7 +280,7 @@ describe("Recora happy path on devnet", function () {
     expect(m.planCount.toNumber()).to.equal(0);
   });
 
-  it("creates a plan", async () => {
+  it("REQ-05: creates a plan with a separate resolver", async () => {
     const ix = await program.methods
       .createPlan(PRICE, new BN(INTERVAL_SECS), new BN(REVIEW_SECS), RESOLVER_FEE_BPS)
       .accounts({
@@ -276,7 +303,7 @@ describe("Recora happy path on devnet", function () {
     expect(plan.feeBps).to.equal(feeBps);
   });
 
-  it("subscribes for two cycles and approves the delegate", async () => {
+  it("REQ-06 & REQ-07: subscribes for three cycles and approves the delegate", async () => {
     const ix = await program.methods
       .subscribe(new BN(CYCLES))
       .accounts({
@@ -304,37 +331,166 @@ describe("Recora happy path on devnet", function () {
     expect(ata.delegatedAmount.toString()).to.equal(PRICE.muln(CYCLES).toString());
   });
 
-  for (let cycle = 0; cycle < CYCLES; cycle++) {
-    it(`bills cycle ${cycle} into escrow and settles it after review`, async () => {
-      const due = (await program.account.subscription.fetch(subPda)).nextBillingTs.toNumber();
-      await waitForChainTime(due);
-      const subscriberBefore = await balance(subscriberAta);
-      await bill(cycle);
+  // Waits until the subscription is due, bills `cycle` and checks the pull
+  // landed in the vault.
+  async function billDue(cycle: number) {
+    const due = (await program.account.subscription.fetch(subPda)).nextBillingTs.toNumber();
+    await waitForChainTime(due);
+    const subscriberBefore = await balance(subscriberAta);
+    await bill(cycle);
 
-      const charge = await program.account.charge.fetch(chargePda(cycle));
-      expect(charge.amount.toString()).to.equal(PRICE.toString());
-      expect("held" in (charge.state as any)).to.equal(true);
-      expect((await balance(vaultPda)).toString()).to.equal(PRICE.toString());
-      expect((subscriberBefore - (await balance(subscriberAta))).toString()).to.equal(PRICE.toString());
-
-      await waitForChainTime(charge.pulledAt.toNumber() + REVIEW_SECS);
-      const [merchantBefore, treasuryBefore] = [await balance(merchantAta), await balance(treasury)];
-      await settle(cycle);
-
-      const fee = (BigInt(PRICE.toString()) * BigInt(feeBps)) / 10_000n;
-      expect(await balance(merchantAta)).to.equal(merchantBefore + BigInt(PRICE.toString()) - fee);
-      expect(await balance(treasury)).to.equal(treasuryBefore + fee);
-      expect(await balance(vaultPda)).to.equal(0n);
-      expect(await connection.getAccountInfo(chargePda(cycle))).to.equal(null);
-
-      const sub = await program.account.subscription.fetch(subPda);
-      expect(sub.currentCycle.toNumber()).to.equal(cycle + 1);
-      expect(sub.cyclesRemaining.toNumber()).to.equal(CYCLES - cycle - 1);
-      expect(sub.openCharges.toNumber()).to.equal(0);
-    });
+    const charge = await program.account.charge.fetch(chargePda(cycle));
+    expect(charge.amount.toString()).to.equal(PRICE.toString());
+    expect("held" in (charge.state as any)).to.equal(true);
+    expect((await balance(vaultPda)).toString()).to.equal(PRICE.toString());
+    expect((subscriberBefore - (await balance(subscriberAta))).toString()).to.equal(PRICE.toString());
+    return charge;
   }
 
-  it("cancels and closes the subscription", async () => {
+  async function expectChargeClosed(cycle: number) {
+    expect(await balance(vaultPda)).to.equal(0n);
+    expect(await connection.getAccountInfo(chargePda(cycle))).to.equal(null);
+    const sub = await program.account.subscription.fetch(subPda);
+    expect(sub.currentCycle.toNumber()).to.equal(cycle + 1);
+    expect(sub.cyclesRemaining.toNumber()).to.equal(CYCLES - cycle - 1);
+    expect(sub.openCharges.toNumber()).to.equal(0);
+  }
+
+  it("REQ-08 & REQ-11: bills cycle 0 into escrow and settles it after review", async () => {
+    const charge = await billDue(0);
+    await waitForChainTime(charge.pulledAt.toNumber() + REVIEW_SECS);
+    const [merchantBefore, treasuryBefore] = [await balance(merchantAta), await balance(treasury)];
+    await settle(0);
+
+    const fee = (BigInt(PRICE.toString()) * BigInt(feeBps)) / 10_000n;
+    expect(await balance(merchantAta)).to.equal(merchantBefore + BigInt(PRICE.toString()) - fee);
+    expect(await balance(treasury)).to.equal(treasuryBefore + fee);
+    await expectChargeClosed(0);
+  });
+
+  it("REQ-10, REQ-10b & REQ-14: disputes cycle 1, the merchant contests, the resolver splits it 70/30", async () => {
+    await billDue(1);
+
+    const evidenceRef = Array.from(new Uint8Array(32).fill(0xab));
+    const dispute = await program.methods
+      .disputeCharge(evidenceRef)
+      .accounts({
+        charge: chargePda(1),
+        sub: subPda,
+        vault: vaultPda,
+        bondSource: subscriberAta,
+        subscriber: subscriber.publicKey,
+        mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      } as any)
+      .instruction();
+    await send(new Transaction().add(dispute), [subscriber], "dispute_charge #1");
+    let charge = await program.account.charge.fetch(chargePda(1));
+    expect("disputed" in (charge.state as any)).to.equal(true);
+    expect(charge.evidenceRef).to.deep.equal(evidenceRef);
+    expect(charge.subscriberBond.toString()).to.equal(BOND.toString());
+
+    const contest = await program.methods
+      .contestDispute()
+      .accounts({
+        charge: chargePda(1),
+        sub: subPda,
+        vault: vaultPda,
+        merchant: merchantPda,
+        merchantAuthority: merchant.publicKey,
+        bondSource: merchantAta,
+        mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      } as any)
+      .instruction();
+    await send(new Transaction().add(contest), [merchant], "contest_dispute #1");
+    charge = await program.account.charge.fetch(chargePda(1));
+    expect("contested" in (charge.state as any)).to.equal(true);
+    expect(charge.merchantBond.toString()).to.equal(BOND.toString());
+    expect(await balance(vaultPda)).to.equal(BigInt(PRICE.toString()) + 2n * BOND);
+
+    const plan = await program.account.plan.fetch(planPda);
+    const [sub0, merch0, res0, tres0] = [
+      await balance(subscriberAta),
+      await balance(merchantAta),
+      await balance(resolverAta),
+      await balance(treasury),
+    ];
+    const resolve = await program.methods
+      .resolveDispute(MERCHANT_BPS)
+      .accounts({
+        charge: chargePda(1),
+        sub: subPda,
+        vault: vaultPda,
+        subscriberAta,
+        merchant: merchantPda,
+        merchantAta,
+        config: configPda,
+        treasury,
+        resolverAta,
+        rentPayer: payer.publicKey,
+        resolver: resolver.publicKey,
+        merchantAuthority: merchant.publicKey,
+        mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      } as any)
+      .instruction();
+    await send(new Transaction().add(resolve), [payer, resolver], "resolve_dispute #1");
+
+    // Merchant gets 70% of the charge less the protocol fee on it; the subscriber
+    // gets the rest. The resolver is paid one bond, and each side pays the part
+    // of it that matches its loss.
+    const price = BigInt(PRICE.toString());
+    const merchantGross = (price * BigInt(MERCHANT_BPS)) / 10_000n;
+    const protocolFee = (merchantGross * BigInt(plan.feeBps)) / 10_000n;
+    const subscriberPart = (BOND * BigInt(MERCHANT_BPS)) / 10_000n;
+    const merchantPart = BOND - subscriberPart;
+    expect(await balance(resolverAta)).to.equal(res0 + BOND);
+    expect(await balance(treasury)).to.equal(tres0 + protocolFee);
+    expect(await balance(merchantAta)).to.equal(merch0 + merchantGross - protocolFee + BOND - merchantPart);
+    expect(await balance(subscriberAta)).to.equal(sub0 + price - merchantGross + BOND - subscriberPart);
+    await expectChargeClosed(1);
+  });
+
+  it("REQ-13: the merchant refunds cycle 2 in full", async () => {
+    await billDue(2);
+    const subscriberBefore = await balance(subscriberAta);
+    const refund = await program.methods
+      .refundCharge()
+      .accounts({
+        charge: chargePda(2),
+        sub: subPda,
+        vault: vaultPda,
+        subscriberAta,
+        rentPayer: payer.publicKey,
+        merchant: merchantPda,
+        merchantAuthority: merchant.publicKey,
+        merchantAta,
+        mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      } as any)
+      .instruction();
+    await send(new Transaction().add(refund), [merchant], "refund_charge #2");
+
+    expect(await balance(subscriberAta)).to.equal(subscriberBefore + BigInt(PRICE.toString()));
+    await expectChargeClosed(2);
+  });
+
+  it("REQ-09: billing with no approved cycles left lapses the subscription", async () => {
+    const before = await program.account.subscription.fetch(subPda);
+    expect(before.cyclesRemaining.toNumber()).to.equal(0);
+    const subscriberBefore = await balance(subscriberAta);
+    await waitForChainTime(before.nextBillingTs.toNumber());
+    await bill(CYCLES);
+
+    const sub = await program.account.subscription.fetch(subPda);
+    expect("lapsed" in (sub.status as any)).to.equal(true);
+    expect(await balance(subscriberAta)).to.equal(subscriberBefore);
+    // The charge account made for the attempt is closed again.
+    expect(await connection.getAccountInfo(chargePda(CYCLES))).to.equal(null);
+  });
+
+  it("REQ-15 & REQ-16: cancels the lapsed subscription and closes it", async () => {
     const cancel = await program.methods
       .cancelSubscription()
       .accounts({
@@ -363,23 +519,28 @@ describe("Recora happy path on devnet", function () {
     expect(await connection.getAccountInfo(vaultPda)).to.equal(null);
   });
 
-  // Return the merchant's tokens and both actors' SOL to the wallet, so a run
-  // costs only fees, the protocol fee and the merchant/plan rent.
+  // Return every actor's tokens and SOL to the wallet, so a run costs only
+  // fees, the protocol fee and the merchant/plan rent.
   after(async () => {
     try {
-      const merchantTokens = await balance(merchantAta).catch(() => 0n);
       const tx = new Transaction();
-      if (merchantTokens > 0n)
-        tx.add(createTransferCheckedInstruction(merchantAta, mint, payerAta, merchant.publicKey, merchantTokens, decimals));
-      tx.add(createCloseAccountInstruction(merchantAta, payer.publicKey, merchant.publicKey));
-      const subscriberTokens = await balance(subscriberAta).catch(() => -1n);
-      if (subscriberTokens === 0n)
-        tx.add(createCloseAccountInstruction(subscriberAta, payer.publicKey, subscriber.publicKey));
+      const signers = new Set<Keypair>([payer]);  // only actors that sign something here
+      for (const [actor, ata] of [[merchant, merchantAta], [subscriber, subscriberAta], [resolver, resolverAta]] as const) {
+        const tokens = await balance(ata).catch(() => -1n);
+        if (tokens < 0n) continue;
+        if (tokens > 0n)
+          tx.add(createTransferCheckedInstruction(ata, mint, payerAta, actor.publicKey, tokens, decimals));
+        tx.add(createCloseAccountInstruction(ata, payer.publicKey, actor.publicKey));
+        signers.add(actor);
+      }
       for (const actor of [merchant, subscriber]) {
         const lamports = await connection.getBalance(actor.publicKey);
-        if (lamports > 0) tx.add(SystemProgram.transfer({ fromPubkey: actor.publicKey, toPubkey: payer.publicKey, lamports }));
+        if (lamports > 0) {
+          tx.add(SystemProgram.transfer({ fromPubkey: actor.publicKey, toPubkey: payer.publicKey, lamports }));
+          signers.add(actor);
+        }
       }
-      await send(tx, [payer, merchant, subscriber], "return funds");
+      await send(tx, [...signers], "return funds");
     } catch (e) {
       console.log(`      return funds skipped: ${(e as Error).message}`);
     }

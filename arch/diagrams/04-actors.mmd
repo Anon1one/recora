@@ -1,0 +1,58 @@
+---
+title: "Actor categories (carried forward from both LOIs)"
+config:
+  flowchart:
+    wrappingWidth: 260
+---
+flowchart LR
+  classDef signer fill:#ffffff,stroke:#111,stroke-width:3px,color:#111
+  classDef benef fill:#ffffff,stroke:#555,stroke-width:1px,stroke-dasharray:2 2,color:#111
+  classDef billing fill:#fde7cf,stroke:#c46a00,stroke-width:2px,color:#111
+  classDef settle fill:#d9e8fb,stroke:#1f5fae,stroke-width:2px,color:#111
+  classDef admin fill:#e6e6e6,stroke:#555,stroke-width:2px,color:#111
+  classDef pda fill:#dcf3dc,stroke:#2e7d32,stroke-width:2px,stroke-dasharray:6 3,color:#111
+  classDef tok fill:#fff6c2,stroke:#9a7b00,stroke-width:1.5px,color:#111
+  classDef xprog fill:#ece3fa,stroke:#6a3fb5,stroke-width:2px,color:#111
+  classDef err fill:#fde2e2,stroke:#b00020,stroke-width:2px,color:#111
+  classDef note fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#333
+  classDef ext fill:#ffffff,stroke:#555,stroke-width:1.5px,color:#111
+  classDef road fill:#ffffff,stroke:#999,stroke-width:1px,stroke-dasharray:8 4,color:#666
+
+
+  subgraph DA["Direct actors: signers"]
+    direction TB
+    MER(["Merchant<br/>signs: initialize_merchant REQ-04, create_plan REQ-05,<br/>refund_charge REQ-13"]):::signer
+    SUB(["Subscriber<br/>signs: subscribe REQ-06/07, dispute_charge REQ-10,<br/>cancel_subscription REQ-15, close_subscription REQ-16"]):::signer
+    KEEP(["Keeper / anyone<br/>signs: process_billing REQ-08/09, settle_charge REQ-11/12<br/>no authority: same result for any signer"]):::signer
+    RES(["Resolver<br/>signs: resolve_dispute REQ-14<br/>named by the merchant in create_plan"]):::signer
+  end
+  subgraph BEN["Beneficiaries: receive, never sign for it"]
+    direction TB
+    B1["Merchant payout ATA<br/>settled charges, merchant_net"]:::benef
+    B2["Subscriber USDC ATA<br/>refunds, subscriber_share, dust sweep"]:::benef
+    B3["Resolver USDC ATA<br/>resolver fee"]:::benef
+    B4["Integrating SaaS / creator platforms<br/>get recurring revenue plus refunds without holding customer funds"]:::benef
+  end
+  subgraph ADM["Administrators"]
+    direction TB
+    A1(["Protocol admin<br/>signs: initialize_config REQ-01, update_config REQ-02,<br/>withdraw_fees REQ-03<br/>cannot touch a live subscription or charge"]):::signer
+    A2(["Program upgrade authority<br/>the real trust root: it can replace every entrypoint.<br/>Moves to a timelocked Squads multisig before mainnet"]):::signer
+  end
+  subgraph STK["Stakeholders: no instruction role"]
+    direction TB
+    K1["SDK integration partners"]:::ext
+    K2["Sub-merchants, DAO treasuries"]:::ext
+    K3["Circle: USDC freeze authority over the vaults"]:::ext
+    K4["Arbitration services: candidate resolvers"]:::ext
+    K5["Auditors"]:::ext
+    K6["Agent frameworks (roadmap)"]:::road
+  end
+  MER -. "paid into" .-> B1
+  SUB -. "refunded into" .-> B2
+  RES -. "fee into" .-> B3
+  A1 -. "withdraws" .-> T["Fee treasury PDA"]:::pda
+
+  style DA fill:#ffffff,stroke:#111,stroke-width:2px
+  style BEN fill:#ffffff,stroke:#555,stroke-dasharray:2 2
+  style ADM fill:#f5f5f5,stroke:#555
+  style STK fill:#fafafa,stroke:#999

@@ -1,0 +1,75 @@
+---
+title: "Recora End-to-end, with external actors"
+config:
+  flowchart:
+    wrappingWidth: 240
+---
+flowchart LR
+  classDef signer fill:#ffffff,stroke:#111,stroke-width:3px,color:#111
+  classDef benef fill:#ffffff,stroke:#555,stroke-width:1px,stroke-dasharray:2 2,color:#111
+  classDef billing fill:#fde7cf,stroke:#c46a00,stroke-width:2px,color:#111
+  classDef settle fill:#d9e8fb,stroke:#1f5fae,stroke-width:2px,color:#111
+  classDef admin fill:#e6e6e6,stroke:#555,stroke-width:2px,color:#111
+  classDef pda fill:#dcf3dc,stroke:#2e7d32,stroke-width:2px,stroke-dasharray:6 3,color:#111
+  classDef tok fill:#fff6c2,stroke:#9a7b00,stroke-width:1.5px,color:#111
+  classDef xprog fill:#ece3fa,stroke:#6a3fb5,stroke-width:2px,color:#111
+  classDef err fill:#fde2e2,stroke:#b00020,stroke-width:2px,color:#111
+  classDef note fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#333
+  classDef ext fill:#ffffff,stroke:#555,stroke-width:1.5px,color:#111
+  classDef road fill:#ffffff,stroke:#999,stroke-width:1px,stroke-dasharray:8 4,color:#666
+
+
+  SUB(["Subscriber wallet"]):::signer
+  MER(["Merchant wallet"]):::signer
+  RES(["Resolver<br/>(merchant-named, e.g. an arbitration service)"]):::signer
+
+  SDK@{ shape: cloud, label: "Merchant SDK + checkout<br/>Next.js" }
+  DASH@{ shape: cloud, label: "Dashboards<br/>merchant: MRR, active subs, failed pulls<br/>subscriber: all subs, refund button, revoke" }
+  KEEP@{ shape: cloud, label: "Keeper bot (cron)<br/>process_billing, settle_charge" }
+  IDX@{ shape: cloud, label: "Indexer<br/>RPC logs / webhook" }
+  DB[("Postgres / Supabase<br/>events, charges, MRR")]
+  EVS@{ shape: cloud, label: "Evidence store<br/>files off-chain, hash on-chain" }
+
+  subgraph SOL["Solana"]
+    direction TB
+    P["recora program<br/>billing + settlement + admin"]:::billing
+    SPL["SPL Token program"]:::xprog
+    SYS["System program"]:::xprog
+    CLK["Clock sysvar<br/>the only time source, no oracle"]:::ext
+    USDC["USDC mint<br/>freeze authority: Circle"]:::ext
+  end
+
+  subgraph ROAD["Roadmap context: not in the POC"]
+    direction TB
+    RD1["Agent Policy PDA + veto window<br/>(Recourse LOI extension)"]:::road
+    RD2["Upgrade authority → timelocked Squads multisig"]:::road
+    RD3["USDT, Token-2022, deactivate_plan"]:::road
+  end
+
+  SUB -->|"1 subscribe"| SDK
+  SDK -->|"signed tx"| P
+  MER -->|"0 create_plan · refund_charge"| P
+  KEEP -->|"2 process_billing each interval"| P
+  SUB -->|"3 dispute_charge"| P
+  SUB -. "upload evidence" .-> EVS
+  RES -. "reads evidence" .-> EVS
+  RES -->|"5 resolve_dispute"| P
+  KEEP -->|"4 settle_charge after the window"| P
+  P -.->|"CPI"| SPL
+  P -.->|"CPI"| SYS
+  P -.->|"reads"| CLK
+  SPL -.- USDC
+  SUB -. "revoke (client-side)" .-> SPL
+  P -. "emit! events" .-> IDX
+  IDX --> DB
+  DB --> DASH
+  DB -. "which subscriptions are due" .-> KEEP
+  DASH --> SUB
+  DASH --> MER
+
+  N1["If every off-chain box vanished, users could still move funds with raw txs:<br/>the crank handlers are permissionless and every other exit is party-signed."]:::note
+  N2["Circle's freeze authority is a third-party power over vault funds.<br/>It is accepted and cannot be mitigated."]:::note
+  N3["Events: MerchantInitialized, PlanCreated, Subscribed, ChargePulled, SubscriptionLapsed,<br/>ChargeDisputed, ChargeSettled, ChargeRefunded, ChargeRefundedAfterTimeout,<br/>DisputeResolved, SubscriptionCancelled, SubscriptionClosed, ConfigUpdated, FeesWithdrawn"]:::note
+  USDC -.- N2
+  IDX -.- N3
+  style ROAD fill:#ffffff,stroke:#999,stroke-dasharray:8 4

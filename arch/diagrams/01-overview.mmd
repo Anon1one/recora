@@ -1,0 +1,83 @@
+---
+title: "Recora Overview (one arrow = one instruction)"
+config:
+  flowchart:
+    wrappingWidth: 240
+---
+flowchart LR
+  classDef signer fill:#ffffff,stroke:#111,stroke-width:3px,color:#111
+  classDef benef fill:#ffffff,stroke:#555,stroke-width:1px,stroke-dasharray:2 2,color:#111
+  classDef billing fill:#fde7cf,stroke:#c46a00,stroke-width:2px,color:#111
+  classDef settle fill:#d9e8fb,stroke:#1f5fae,stroke-width:2px,color:#111
+  classDef admin fill:#e6e6e6,stroke:#555,stroke-width:2px,color:#111
+  classDef pda fill:#dcf3dc,stroke:#2e7d32,stroke-width:2px,stroke-dasharray:6 3,color:#111
+  classDef tok fill:#fff6c2,stroke:#9a7b00,stroke-width:1.5px,color:#111
+  classDef xprog fill:#ece3fa,stroke:#6a3fb5,stroke-width:2px,color:#111
+  classDef err fill:#fde2e2,stroke:#b00020,stroke-width:2px,color:#111
+  classDef note fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#333
+  classDef ext fill:#ffffff,stroke:#555,stroke-width:1.5px,color:#111
+  classDef road fill:#ffffff,stroke:#999,stroke-width:1px,stroke-dasharray:8 4,color:#666
+
+
+  MER(["Merchant<br/>signer"]):::signer
+  SUB(["Subscriber<br/>signer"]):::signer
+  KEEP(["Keeper / anyone<br/>signer, no authority"]):::signer
+  RES(["Resolver<br/>signer, named in Plan"]):::signer
+  ADM(["Protocol admin<br/>signer"]):::signer
+
+  subgraph PROG["recora program (one program, three instruction groups)"]
+    direction TB
+    subgraph ADMN["Admin"]
+      A1["initialize_config<br/>update_config<br/>withdraw_fees"]:::admin
+    end
+    subgraph BILL["Billing"]
+      direction TB
+      B1["initialize_merchant"]:::billing
+      B2["create_plan"]:::billing
+      B3["subscribe"]:::billing
+      B4["process_billing"]:::billing
+      B5["cancel_subscription<br/>close_subscription"]:::billing
+    end
+    subgraph SETL["Settlement"]
+      direction TB
+      S1["dispute_charge"]:::settle
+      S2["settle_charge"]:::settle
+      S3["refund_charge"]:::settle
+      S4["resolve_dispute"]:::settle
+    end
+  end
+
+  SPL["SPL Token program<br/>transfer_checked · approve · close_account"]:::xprog
+  SYS["System program<br/>create_account"]:::xprog
+
+  SATA["Subscriber USDC ATA<br/>delegate = Delegate PDA"]:::tok
+  VAULT["Vault PDA<br/>seeds: vault, subscription<br/>authority: Subscription PDA"]:::pda
+  MATA["Merchant payout ATA<br/>beneficiary"]:::benef
+  TRE["Fee treasury PDA<br/>seeds: treasury"]:::pda
+  RATA["Resolver USDC ATA<br/>beneficiary"]:::benef
+
+  ADM -->|"0 · REQ-01 / 02 / 03"| A1
+  MER -->|"1 initialize_merchant · REQ-04"| B1
+  MER -->|"2 create_plan · REQ-05"| B2
+  SUB -->|"3 subscribe · REQ-06"| B3
+  B3 -.->|"3a approve CPI · REQ-07"| SATA
+  KEEP -->|"4 process_billing · REQ-08 / 09"| B4
+  SATA ==>|"4a pull price, Delegate PDA signs"| VAULT
+  SUB -->|"5 dispute_charge · REQ-10"| S1
+  KEEP -->|"6 settle_charge · REQ-11 / 12"| S2
+  VAULT ==>|"6a price minus fee"| MATA
+  VAULT ==>|"6b fee"| TRE
+  MER -->|"7 refund_charge · REQ-13"| S3
+  VAULT ==>|"7a / 6c full refund"| SATA
+  RES -->|"8 resolve_dispute · REQ-14"| S4
+  VAULT ==>|"8a split"| RATA
+  SUB -->|"9 cancel / close · REQ-15 / 16"| B5
+  PROG -.->|"CPI"| SPL
+  PROG -.->|"CPI"| SYS
+
+  style PROG fill:#ffffff,stroke:#333,stroke-width:2px
+  style BILL fill:#fff8f0,stroke:#c46a00
+  style SETL fill:#f2f7fe,stroke:#1f5fae
+  style ADMN fill:#f5f5f5,stroke:#555
+
+  N1["1 Merchant registers a payout ATA · 2 publishes a plan (price, interval, review window, resolver)<br/>3 Subscriber signs the terms and approves the shared Delegate PDA<br/>4 Each interval the pull lands in the subscription's vault as a Held charge<br/>5 Inside the review window the subscriber can dispute (the refund button)<br/>6 Window over and no dispute: anyone settles it to the merchant<br/>7 The merchant can refund at any time · 8 A dispute is split by the resolver or times out<br/>9 Cancel stops billing; close returns rent once nothing is held"]:::note

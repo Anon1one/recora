@@ -1,0 +1,34 @@
+---
+title: "withdraw_fees · REQ-03"
+config:
+  flowchart:
+    rankSpacing: 28
+    nodeSpacing: 30
+    wrappingWidth: 260
+---
+flowchart TD
+  classDef signer fill:#ffffff,stroke:#111,stroke-width:3px,color:#111
+  classDef benef fill:#ffffff,stroke:#555,stroke-width:1px,stroke-dasharray:2 2,color:#111
+  classDef billing fill:#fde7cf,stroke:#c46a00,stroke-width:2px,color:#111
+  classDef settle fill:#d9e8fb,stroke:#1f5fae,stroke-width:2px,color:#111
+  classDef admin fill:#e6e6e6,stroke:#555,stroke-width:2px,color:#111
+  classDef pda fill:#dcf3dc,stroke:#2e7d32,stroke-width:2px,stroke-dasharray:6 3,color:#111
+  classDef tok fill:#fff6c2,stroke:#9a7b00,stroke-width:1.5px,color:#111
+  classDef xprog fill:#ece3fa,stroke:#6a3fb5,stroke-width:2px,color:#111
+  classDef err fill:#fde2e2,stroke:#b00020,stroke-width:2px,color:#111
+  classDef note fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#333
+  classDef ext fill:#ffffff,stroke:#555,stroke-width:1.5px,color:#111
+  classDef road fill:#ffffff,stroke:#999,stroke-width:1px,stroke-dasharray:8 4,color:#666
+
+
+  A(["Protocol admin<br/>signer"]):::signer -->|"withdraw_fees(amount) · REQ-03"| IX["withdraw_fees"]:::admin
+  IX --> D1{"signer == config.authority?"}
+  D1 -- no --> E1["Error: Unauthorized"]:::err
+  D1 -- yes --> D2{"treasury == config.fee_treasury<br/>and amount ≤ treasury.amount?"}
+  D2 -- no --> E2["Error: InsufficientFees / WrongTreasury"]:::err
+  D2 -- yes --> T1["transfer_checked Treasury → destination<br/>signer: Config PDA (seeds)"]:::admin
+  T1 --> EV["emit FeesWithdrawn"]:::pda
+  T1 -.->|"CPI"| SPL["SPL Token program"]:::xprog
+  TRE["Fee treasury PDA"]:::pda ==>|"amount"| DST["Admin destination account<br/>beneficiary"]:::benef
+  N1["The treasury only ever receives protocol fees from settled or resolved charges.<br/>No subscription vault is reachable from this instruction."]:::note
+  T1 -.- N1

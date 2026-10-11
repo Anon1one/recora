@@ -1,0 +1,73 @@
+---
+title: "Recora Accounts and PDAs (owner, authority, seeds, data)"
+config:
+  flowchart:
+    wrappingWidth: 340
+---
+flowchart TB
+  classDef signer fill:#ffffff,stroke:#111,stroke-width:3px,color:#111
+  classDef benef fill:#ffffff,stroke:#555,stroke-width:1px,stroke-dasharray:2 2,color:#111
+  classDef billing fill:#fde7cf,stroke:#c46a00,stroke-width:2px,color:#111
+  classDef settle fill:#d9e8fb,stroke:#1f5fae,stroke-width:2px,color:#111
+  classDef admin fill:#e6e6e6,stroke:#555,stroke-width:2px,color:#111
+  classDef pda fill:#dcf3dc,stroke:#2e7d32,stroke-width:2px,stroke-dasharray:6 3,color:#111
+  classDef tok fill:#fff6c2,stroke:#9a7b00,stroke-width:1.5px,color:#111
+  classDef xprog fill:#ece3fa,stroke:#6a3fb5,stroke-width:2px,color:#111
+  classDef err fill:#fde2e2,stroke:#b00020,stroke-width:2px,color:#111
+  classDef note fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#333
+  classDef ext fill:#ffffff,stroke:#555,stroke-width:1.5px,color:#111
+  classDef road fill:#ffffff,stroke:#999,stroke-width:1px,stroke-dasharray:8 4,color:#666
+
+
+  RP["recora program<br/>owns every data PDA"]:::billing
+  SPLP["SPL Token program<br/>owns every token account"]:::xprog
+
+  subgraph GLOBAL["Global (created once by admin)"]
+    CFG["<b>Config</b> · PDA<br/>seeds: 'config'<br/>owner: recora · authority: config.authority (admin key)<br/>───<br/>authority, pending_authority: Pubkey<br/>fee_treasury: Pubkey<br/>fee_bps, max_resolver_fee_bps: u16<br/>min/max_review_secs, min/max_interval_secs: i64<br/>dispute_secs: i64<br/>paused: bool · bump, treasury_bump: u8"]:::pda
+    TRE["<b>Fee treasury</b> · PDA token account<br/>seeds: 'treasury'<br/>owner: SPL Token · authority: Config PDA<br/>mint: USDC"]:::pda
+    DEL["<b>Delegate</b> · PDA, signer only, never initialised<br/>seeds: 'delegate'<br/>role: SPL delegate on subscriber ATAs<br/>(one delegate shared by all subscriptions)"]:::pda
+  end
+
+  subgraph MERCH["Per merchant"]
+    MER["<b>Merchant</b> · PDA<br/>seeds: 'merchant', merchant_authority<br/>owner: recora · authority: merchant wallet<br/>rent: merchant<br/>───<br/>authority: Pubkey<br/>payout_ata: Pubkey (canonical USDC ATA)<br/>plan_count: u32 · total_revenue: u64 · bump: u8"]:::pda
+    PLAN["<b>Plan</b> · PDA<br/>seeds: 'plan', merchant_authority, plan_id u32 LE<br/>owner: recora · authority: merchant wallet<br/>rent: merchant<br/>───<br/>merchant: Pubkey · mint: Pubkey<br/>price: u64 · interval_secs, review_secs: i64<br/>resolver: Pubkey · resolver_fee_bps: u16<br/>subs_count: u32 (active subs) · bump: u8"]:::pda
+    MATA["Merchant payout ATA<br/>owner: SPL Token · authority: merchant wallet"]:::tok
+  end
+
+  subgraph PERSUB["Per subscription"]
+    SUBA["<b>Subscription</b> · PDA<br/>seeds: 'sub', plan_pda, subscriber<br/>owner: recora · rent: subscriber<br/>───<br/>subscriber, plan, merchant: Pubkey<br/><i>snapshots at subscribe:</i> price, fee_bps, interval_secs,<br/>review_secs, dispute_secs, resolver, resolver_fee_bps<br/>status: Active | Lapsed | Cancelled<br/>next_billing_ts: i64 · cycle: u32<br/>open_charges: u16 · held_total: u64<br/>bump, vault_bump: u8"]:::pda
+    VAULT["<b>Vault</b> · PDA token account<br/>seeds: 'vault', subscription_pda<br/>owner: SPL Token · authority: Subscription PDA<br/>mint: USDC · rent: subscriber<br/>reused every cycle"]:::pda
+    SATA["Subscriber USDC ATA<br/>owner: SPL Token · authority: subscriber<br/>delegate: Delegate PDA (set by subscribe), delegated_amount"]:::tok
+  end
+
+  subgraph PERCHG["Per billing cycle"]
+    CHG["<b>Charge</b> · PDA<br/>seeds: 'charge', subscription_pda, cycle u32 LE<br/>owner: recora · rent: process_billing caller<br/>───<br/>subscription: Pubkey · cycle: u32<br/>amount: u64 · pulled_at: i64<br/>dispute_opened_at: i64<br/>state: Held | Disputed | Settled | Refunded | Resolved<br/>evidence_ref: [u8;32] · rent_payer: Pubkey · bump: u8"]:::pda
+  end
+
+  USDC["USDC mint (Circle)<br/>classic SPL Token, not Token-2022<br/>freeze authority: Circle"]:::ext
+
+  RP -. "owns" .-> CFG
+  RP -. "owns" .-> MER
+  RP -. "owns" .-> PLAN
+  RP -. "owns" .-> SUBA
+  RP -. "owns" .-> CHG
+  SPLP -. "owns" .-> TRE
+  SPLP -. "owns" .-> VAULT
+  CFG -- "authority over" --> TRE
+  MER -- "1..n" --> PLAN
+  MER -. "stores address of" .-> MATA
+  PLAN -- "1..n" --> SUBA
+  SUBA -- "authority over" --> VAULT
+  SUBA -- "1..n" --> CHG
+  DEL -. "approved delegate of" .-> SATA
+  CHG -. "this cycle's funds held in" .-> VAULT
+  USDC -. "mint of" .-> VAULT
+
+  N1["Every seed is fixed length (literal, Pubkey, or u32 LE), so seed concatenation cannot collide.<br/>Terminal Charges are closed and their rent goes to charge.rent_payer.<br/>Payout destinations must be canonical ATAs, so anyone can recreate a closed one."]:::note
+  N2["Invariant: vault.amount ≥ subscription.held_total<br/>(anyone can send dust; the residual is swept at close_subscription)"]:::note
+  N2 -.- VAULT
+
+  style GLOBAL fill:#f7f7f7,stroke:#777
+  style MERCH fill:#f7f7f7,stroke:#777
+  style PERSUB fill:#f7f7f7,stroke:#777
+  style PERCHG fill:#f7f7f7,stroke:#777

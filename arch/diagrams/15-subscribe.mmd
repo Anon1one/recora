@@ -1,0 +1,51 @@
+---
+title: "subscribe: the subscriber signs the plan terms · REQ-06, REQ-07"
+config:
+  flowchart:
+    rankSpacing: 28
+    nodeSpacing: 30
+    wrappingWidth: 260
+---
+flowchart TD
+  classDef signer fill:#ffffff,stroke:#111,stroke-width:3px,color:#111
+  classDef benef fill:#ffffff,stroke:#555,stroke-width:1px,stroke-dasharray:2 2,color:#111
+  classDef billing fill:#fde7cf,stroke:#c46a00,stroke-width:2px,color:#111
+  classDef settle fill:#d9e8fb,stroke:#1f5fae,stroke-width:2px,color:#111
+  classDef admin fill:#e6e6e6,stroke:#555,stroke-width:2px,color:#111
+  classDef pda fill:#dcf3dc,stroke:#2e7d32,stroke-width:2px,stroke-dasharray:6 3,color:#111
+  classDef tok fill:#fff6c2,stroke:#9a7b00,stroke-width:1.5px,color:#111
+  classDef xprog fill:#ece3fa,stroke:#6a3fb5,stroke-width:2px,color:#111
+  classDef err fill:#fde2e2,stroke:#b00020,stroke-width:2px,color:#111
+  classDef note fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#333
+  classDef ext fill:#ffffff,stroke:#555,stroke-width:1.5px,color:#111
+  classDef road fill:#ffffff,stroke:#999,stroke-width:1px,stroke-dasharray:8 4,color:#666
+
+
+  SDK@{ shape: cloud, label: "Merchant checkout<br/>(Next.js SDK)" }
+  S(["Subscriber<br/>signer, pays rent"]):::signer
+  SDK -->|"builds tx"| S
+  S -->|"subscribe(n_cycles) · REQ-06"| IX["subscribe"]:::billing
+  IX --> D1{"config.paused?"}
+  D1 -- yes --> E1["Error: ProtocolPaused"]:::err
+  D1 -- no --> D3{"subscriber ≠ merchant<br/>and subscriber ≠ plan.resolver?"}
+  D3 -- no --> E3["Error: PartyConflict"]:::err
+  D3 -- yes --> D4{"subscriber ATA == canonical USDC ATA<br/>of the subscriber?"}
+  D4 -- no --> E4["Error: WrongTokenAccount"]:::err
+  D4 -- yes --> A1["init Subscription PDA · seeds: sub, plan, subscriber<br/>snapshot price, fee_bps, interval, review,<br/>dispute_secs, resolver, resolver_fee_bps<br/>status = Active, next_billing_ts = now"]:::pda
+  A1 --> A2["init Vault PDA token account<br/>seeds: vault, subscription<br/>authority = Subscription PDA"]:::pda
+  A2 --> D5{"ATA delegate already<br/>== Delegate PDA?"}
+  D5 -- yes --> AP1["approve CPI · REQ-07<br/>amount = delegated_amount + price × n_cycles"]:::billing
+  D5 -- "no (none, or a foreign delegate)" --> AP2["approve CPI · REQ-07<br/>amount = price × n_cycles<br/>replaces the foreign delegate"]:::billing
+  AP1 --> U1["plan.subs_count += 1<br/>emit Subscribed"]:::billing
+  AP2 --> U1
+  A1 -.->|"CPI"| SYS["System program"]:::xprog
+  AP1 -.->|"CPI approve"| SPL["SPL Token program"]:::xprog
+  AP2 -.->|"CPI approve"| SPL
+  SPL -. "sets delegate on" .-> SATA["Subscriber USDC ATA<br/>authority stays the subscriber;<br/>delegate changes to the Delegate PDA 'delegate'"]:::tok
+
+  N1["Both parties have signed the terms: the merchant in create_plan, the subscriber here.<br/>This closes the Recourse LOI hole where the payee never signed."]:::note
+  N2["No first charge here: next_billing_ts = now, so the keeper's first<br/>process_billing takes cycle 0. subscribe stays one state transition."]:::note
+  N3["One shared delegate: an SPL account has only one delegate,<br/>so a per-subscription delegate would overwrite the previous subscription."]:::note
+  A1 -.- N2
+  U1 -.- N1
+  D5 -.- N3
