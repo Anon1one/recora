@@ -238,7 +238,7 @@ Charge rent always goes back to `charge.rent_payer`, the keeper that billed that
 
 ### 5. Deploying
 
-The program ID in `declare_id!` and `Anchor.toml` is `ByzDYmPuV1FK7Z4RMGLgnqELFLZf3u2GoRSsB9bTndiu`. Its keypair is not in this repository. To deploy your own instance, run `anchor keys sync` (writes a fresh ID into both places), then `pnpm build`, `pnpm codegen`, and `anchor deploy`.
+The program ID in `declare_id!` and `Anchor.toml` is `ByzDYmPuV1FK7Z4RMGLgnqELFLZf3u2GoRSsB9bTndiu`. Its keypair is not in this repository.
 
 ---
 
