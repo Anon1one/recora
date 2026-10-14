@@ -253,3 +253,9 @@ A publication-grade security audit is documented in [`docs/SECURITY_AUDIT.md`](d
   ```
 - **Rounding**: the floor of the merchant's gross share is the only rounding on a charge, and its dust goes to the subscriber; the protocol-fee floor stays with the merchant.
 - **Known limitations** that are deliberate design choices (one delegate per token account, catch-up billing, one classic SPL mint per deployment).
+
+---
+
+## License
+
+Copyright (c) 2026 Akshat Odiya and Utkarsh Jaiswal. All rights reserved. This code is public for viewing and evaluation only; copying, modification, deployment or redistribution requires written permission. See [`LICENSE`](LICENSE).
