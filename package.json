@@ -2,6 +2,7 @@
   "name": "recora",
   "version": "0.1.0",
   "private": true,
+  "license": "UNLICENSED",
   "scripts": {
     "dev:web": "pnpm --filter @recora/web dev",
     "build:web": "pnpm --filter @recora/web build",
